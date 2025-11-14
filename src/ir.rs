@@ -43,6 +43,12 @@ pub enum IrType {
         return_type: Box<IrType>,
     },
     
+    // Struct type (for classes)
+    Struct {
+        name: String,
+        fields: Vec<(String, IrType)>, // (field_name, field_type)
+    },
+    
     // Named type (will be resolved later)
     Named(String),
 }
@@ -99,9 +105,10 @@ pub enum Instruction {
     
     // Function calls
     Call {
-        callee: ValueId,
+        callee: ValueId, // ValueId for function reference, or special FunctionId value
         args: Vec<ValueId>,
         effect: MemoryEffect,
+        function_name: Option<String>, // Optional function name for static calls
     },
     
     // Control flow
@@ -129,6 +136,21 @@ pub enum Instruction {
     TensorOp {
         op: TensorOp,
         args: Vec<ValueId>,
+    },
+    
+    // Struct operations
+    AllocStruct {
+        struct_name: String,
+        fields: Vec<ValueId>, // Field values in order
+    },
+    GetField {
+        obj: ValueId,
+        field_name: String,
+    },
+    SetField {
+        obj: ValueId,
+        field_name: String,
+        value: ValueId,
     },
 }
 
@@ -178,10 +200,18 @@ pub struct IrFunction {
     pub attributes: Vec<String>, // e.g., "@kernel", "@inline"
 }
 
+/// Struct definition in IR
+#[derive(Debug, Clone)]
+pub struct IrStruct {
+    pub name: String,
+    pub fields: Vec<(String, IrType)>, // (field_name, field_type)
+}
+
 /// Complete IR program
 #[derive(Debug, Clone)]
 pub struct IrProgram {
     pub functions: Vec<IrFunction>,
+    pub structs: Vec<IrStruct>, // Class/struct definitions
     pub next_value_id: u32,
     pub next_block_id: u32,
     pub next_function_id: u32,
@@ -191,10 +221,19 @@ impl IrProgram {
     pub fn new() -> Self {
         Self {
             functions: Vec::new(),
+            structs: Vec::new(),
             next_value_id: 0,
             next_block_id: 0,
             next_function_id: 0,
         }
+    }
+    
+    pub fn add_struct(&mut self, name: String, fields: Vec<(String, IrType)>) {
+        self.structs.push(IrStruct { name, fields });
+    }
+    
+    pub fn get_struct(&self, name: &str) -> Option<&IrStruct> {
+        self.structs.iter().find(|s| s.name == name)
     }
     
     pub fn new_value_id(&mut self) -> ValueId {
@@ -254,7 +293,25 @@ impl From<&Type> for IrType {
                     dims: ir_dims,
                 }
             }
-            Type::Named(name) => IrType::Named(name.clone()),
+            Type::Named(name) => {
+                // Try to resolve named type - if it's a class, convert to Struct
+                // This will be resolved later during IR building when structs are known
+                IrType::Named(name.clone())
+            },
+        }
+    }
+}
+
+/// Helper to get struct field type
+impl IrType {
+    pub fn get_struct_field_type(&self, field_name: &str) -> Option<&IrType> {
+        match self {
+            IrType::Struct { fields, .. } => {
+                fields.iter()
+                    .find(|(name, _)| name == field_name)
+                    .map(|(_, ty)| ty)
+            }
+            _ => None,
         }
     }
 }

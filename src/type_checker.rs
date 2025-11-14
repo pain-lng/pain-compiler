@@ -19,6 +19,7 @@ pub type TypeResult<T> = Result<T, TypeError>;
 pub struct TypeContext {
     variables: HashMap<String, Type>,
     functions: HashMap<String, Function>,
+    classes: HashMap<String, Class>, // Class definitions
 }
 
 impl TypeContext {
@@ -26,7 +27,16 @@ impl TypeContext {
         Self {
             variables: HashMap::new(),
             functions: HashMap::new(),
+            classes: HashMap::new(),
         }
+    }
+    
+    pub fn add_class(&mut self, name: String, class: Class) {
+        self.classes.insert(name, class);
+    }
+    
+    pub fn get_class(&self, name: &str) -> Option<&Class> {
+        self.classes.get(name)
     }
     
     pub fn add_variable(&mut self, name: String, ty: Type) {
@@ -45,16 +55,57 @@ impl TypeContext {
 pub fn type_check_program(program: &Program) -> TypeResult<()> {
     let mut ctx = TypeContext::new();
     
-    // First pass: collect function signatures
+    // First pass: collect class and function signatures
     for item in &program.items {
-        let Item::Function(func) = item;
-        ctx.add_function(func.name.clone(), func.clone());
+        match item {
+            Item::Function(func) => {
+                ctx.add_function(func.name.clone(), func.clone());
+            }
+            Item::Class(class) => {
+                ctx.add_class(class.name.clone(), class.clone());
+            }
+        }
     }
     
-    // Second pass: type check functions
+    // Second pass: type check classes and functions
     for item in &program.items {
-        let Item::Function(func) = item;
-        type_check_function(&mut ctx, func)?;
+        match item {
+            Item::Function(func) => {
+                type_check_function(&mut ctx, func)?;
+            }
+            Item::Class(class) => {
+                type_check_class(&mut ctx, class)?;
+            }
+        }
+    }
+    
+    Ok(())
+}
+
+fn type_check_class(ctx: &mut TypeContext, class: &Class) -> TypeResult<()> {
+    // Create a new context for class methods (with access to class fields)
+    let mut class_ctx = ctx.clone();
+    
+    // Add class fields to context (as variables)
+    for field in &class.fields {
+        class_ctx.add_variable(field.name.clone(), field.ty.clone());
+    }
+    
+    // Type check methods
+    for method in &class.methods {
+        // Add 'self' parameter implicitly
+        let mut method_ctx = class_ctx.clone();
+        method_ctx.add_variable("self".to_string(), Type::Named(class.name.clone()));
+        
+        // Add method parameters
+        for param in &method.params {
+            method_ctx.add_variable(param.name.clone(), param.ty.clone());
+        }
+        
+        // Type check method body
+        for stmt in &method.body {
+            type_check_statement(&mut method_ctx, stmt)?;
+        }
     }
     
     Ok(())
@@ -290,15 +341,47 @@ fn infer_expr_type(ctx: &TypeContext, expr: &Expr) -> TypeResult<Type> {
                 }
             }
         }
-        Expr::Member(obj, _field) => {
-            let _obj_type = infer_expr_type(ctx, obj)?;
-            // TODO: Look up field type in struct/class
-            Ok(Type::Dynamic)
+        Expr::Member(obj, field) => {
+            let obj_type = infer_expr_type(ctx, obj)?;
+            // Look up field type in class/struct
+            match obj_type {
+                Type::Named(class_name) => {
+                    if let Some(class) = ctx.get_class(&class_name) {
+                        // Find field in class
+                        if let Some(field_def) = class.fields.iter().find(|f| f.name == *field) {
+                            Ok(field_def.ty.clone())
+                        } else {
+                            // Check if it's a method call (will be handled by Call)
+                            Ok(Type::Dynamic)
+                        }
+                    } else {
+                        Ok(Type::Dynamic) // Unknown class
+                    }
+                }
+                _ => Ok(Type::Dynamic), // Not a class type
+            }
         }
         Expr::IsInstance(expr, _ty) => {
             let _expr_type = infer_expr_type(ctx, expr)?;
             // isinstance always returns bool
             Ok(Type::Bool)
+        }
+        Expr::New { class_name, args } => {
+            // Check if class exists
+            if let Some(_class) = ctx.get_class(class_name) {
+                // TODO: Check constructor arguments match class fields
+                // For now, just verify class exists
+                let _arg_types: Result<Vec<Type>, TypeError> = args.iter()
+                    .map(|arg| infer_expr_type(ctx, arg))
+                    .collect();
+                Ok(Type::Named(class_name.clone()))
+            } else {
+                let span = Span::single(Position::start()); // TODO: Get actual span
+                Err(TypeError::UndefinedVariable {
+                    name: format!("Class '{}' not found", class_name),
+                    span,
+                })
+            }
         }
         Expr::Assign(left, right) | Expr::AddAssign(left, right) | Expr::SubAssign(left, right) | Expr::MulAssign(left, right) | Expr::DivAssign(left, right) => {
             let _left_type = infer_expr_type(ctx, left)?;

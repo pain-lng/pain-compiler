@@ -9,15 +9,33 @@ license.workspace = true
 name = "pain_compiler"
 path = "src/lib.rs"
 
+[[bin]]
+name = "pain-compiler"
+path = "src/main.rs"
+
 [dependencies]
+# Parser
 logos.workspace = true
-# lalrpop-util.workspace = true  # Reserved for future migration
-# inkwell.workspace = true  # Enable when LLVM is installed
-thiserror.workspace = true
+
+# Utilities
 anyhow.workspace = true
 clap.workspace = true
+thiserror.workspace = true
+
+# Runtime (for interpreter)
 pain-runtime = { path = "../pain-runtime" }
 
-# [build-dependencies]
-# lalrpop.workspace = true  # Reserved for future migration
+[dev-dependencies]
+criterion.workspace = true
 
+[[bench]]
+name = "fibonacci"
+harness = false
+
+[[bench]]
+name = "sum"
+harness = false
+
+[[bench]]
+name = "factorial"
+harness = false

@@ -35,6 +35,9 @@ impl Formatter {
     fn format_item(&mut self, item: &Item) {
         match item {
             Item::Function(func) => self.format_function(func),
+            Item::Class(_class) => {
+                // TODO: Format classes
+            }
         }
     }
 
@@ -308,6 +311,18 @@ impl Formatter {
                 self.format_expr(expr);
                 self.write(", ");
                 self.format_type(ty);
+                self.write(")");
+            }
+            Expr::New { class_name, args } => {
+                self.write("new ");
+                self.write(class_name);
+                self.write("(");
+                for (i, arg) in args.iter().enumerate() {
+                    if i > 0 {
+                        self.write(", ");
+                    }
+                    self.format_expr(arg);
+                }
                 self.write(")");
             }
         }

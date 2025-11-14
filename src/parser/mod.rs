@@ -2,12 +2,12 @@
 // TODO: Migrate to lalrpop when token integration is resolved
 
 use crate::ast::*;
-use crate::lexer::Token;
+use crate::lexer::{Token, IndentLexer};
 use crate::span::{Span, Position};
-use logos::Logos;
 
 pub fn parse(source: &str) -> Result<Program, String> {
-    let mut lexer = Token::lexer(source);
+    // Use IndentLexer for proper indentation handling
+    let mut lexer = IndentLexer::new(source);
     let mut tokens = Vec::new();
     
     while let Some(token) = lexer.next() {
@@ -62,10 +62,12 @@ impl<'a> Parser<'a> {
     }
     
     fn parse_item(&mut self) -> Result<Item, String> {
-        if matches!(self.peek(), Some(Token::Fn) | Some(Token::At) | Some(Token::DocComment(_))) {
+        if matches!(self.peek(), Some(Token::Class)) {
+            Ok(Item::Class(self.parse_class()?))
+        } else if matches!(self.peek(), Some(Token::Fn) | Some(Token::At) | Some(Token::DocComment(_))) {
             Ok(Item::Function(self.parse_function()?))
         } else {
-            Err("Expected function or attribute".to_string())
+            Err("Expected function, class, or attribute".to_string())
         }
     }
     
@@ -106,9 +108,23 @@ impl<'a> Parser<'a> {
         
         self.expect(Token::Colon)?;
         
+        // Expect Indent token after colon for function body (optional for top-level)
         let mut body = Vec::new();
-        while !matches!(self.peek(), Some(Token::Fn) | Some(Token::At) | Some(Token::DocComment(_)) | None) {
-            body.push(self.parse_statement()?);
+        if matches!(self.peek(), Some(Token::Indent)) {
+            self.next(); // consume Indent
+            // Parse function body until Dedent
+            while !matches!(self.peek(), Some(Token::Dedent) | None) {
+                body.push(self.parse_statement()?);
+            }
+            // Consume Dedent if present
+            if matches!(self.peek(), Some(Token::Dedent)) {
+                self.next();
+            }
+        } else {
+            // No indentation - parse single statement or empty body
+            if !matches!(self.peek(), Some(Token::Fn) | Some(Token::At) | Some(Token::DocComment(_)) | None) {
+                body.push(self.parse_statement()?);
+            }
         }
         
         // Create a span for the function (placeholder for now)
@@ -120,6 +136,100 @@ impl<'a> Parser<'a> {
             params,
             return_type,
             body,
+            span,
+        })
+    }
+    
+    fn parse_class(&mut self) -> Result<Class, String> {
+        // Parse doc comment if present
+        let doc = if matches!(self.peek(), Some(Token::DocComment(_))) {
+            if let Some(Token::DocComment(doc_str)) = self.next() {
+                Some(doc_str.clone())
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        
+        let mut attrs = Vec::new();
+        while matches!(self.peek(), Some(Token::At)) {
+            attrs.push(self.parse_attribute()?);
+        }
+        
+        self.expect(Token::Class)?;
+        
+        let name = match self.next() {
+            Some(Token::Ident(name)) => name.clone(),
+            _ => return Err("Expected class name".to_string()),
+        };
+        
+        self.expect(Token::Colon)?;
+        
+        // Expect Indent token after colon
+        if !matches!(self.peek(), Some(Token::Indent)) {
+            return Err("Expected indented block after ':'".to_string());
+        }
+        self.next(); // consume Indent
+        
+        let mut fields = Vec::new();
+        let mut methods = Vec::new();
+        
+        // Parse class body until Dedent
+        while !matches!(self.peek(), Some(Token::Dedent) | None) {
+            // Check if it's a field (var/let with type annotation) or method (fn)
+            if matches!(self.peek(), Some(Token::Var) | Some(Token::Let)) {
+                fields.push(self.parse_class_field()?);
+            } else if matches!(self.peek(), Some(Token::Fn) | Some(Token::At) | Some(Token::DocComment(_))) {
+                methods.push(self.parse_function()?);
+            } else {
+                return Err("Expected field or method in class body".to_string());
+            }
+        }
+        
+        // Consume Dedent if present
+        if matches!(self.peek(), Some(Token::Dedent)) {
+            self.next();
+        }
+        
+        let span = Span::single(Position::start());
+        Ok(Class {
+            doc,
+            attrs,
+            name,
+            fields,
+            methods,
+            span,
+        })
+    }
+    
+    fn parse_class_field(&mut self) -> Result<ClassField, String> {
+        let mutable = matches!(self.peek(), Some(Token::Var));
+        if matches!(self.peek(), Some(Token::Var) | Some(Token::Let)) {
+            self.next();
+        } else {
+            return Err("Expected 'var' or 'let' for class field".to_string());
+        }
+        
+        let name = match self.next() {
+            Some(Token::Ident(name)) => name.clone(),
+            _ => return Err("Expected field name".to_string()),
+        };
+        
+        self.expect(Token::Colon)?;
+        let ty = self.parse_type()?;
+        
+        // Optional initializer (for now, we'll skip it)
+        if matches!(self.peek(), Some(Token::Assign)) {
+            self.next();
+            self.parse_expr()?; // Skip initializer for now
+        }
+        
+        let span = Span::single(Position::start());
+        Ok(ClassField {
+            name,
+            ty,
+            mutable,
             span,
         })
     }
@@ -247,17 +357,45 @@ impl<'a> Parser<'a> {
                 self.next();
                 let cond = self.parse_expr()?;
                 self.expect(Token::Colon)?;
+                
+                // Expect Indent token after colon
+                if !matches!(self.peek(), Some(Token::Indent)) {
+                    return Err("Expected indented block after ':'".to_string());
+                }
+                self.next(); // consume Indent
+                
                 let mut then = Vec::new();
-                while !matches!(self.peek(), Some(Token::Else) | Some(Token::Fn) | Some(Token::At) | None) {
+                // Parse if body until Dedent
+                while !matches!(self.peek(), Some(Token::Dedent) | Some(Token::Else) | None) {
                     then.push(self.parse_statement()?);
                 }
+                
+                // Consume Dedent if present
+                if matches!(self.peek(), Some(Token::Dedent)) {
+                    self.next();
+                }
+                
                 let else_ = if matches!(self.peek(), Some(Token::Else)) {
                     self.next();
                     self.expect(Token::Colon)?;
+                    
+                    // Expect Indent token after else colon
+                    if !matches!(self.peek(), Some(Token::Indent)) {
+                        return Err("Expected indented block after 'else:'".to_string());
+                    }
+                    self.next(); // consume Indent
+                    
                     let mut else_body = Vec::new();
-                    while !matches!(self.peek(), Some(Token::Fn) | Some(Token::At) | None) {
+                    // Parse else body until Dedent
+                    while !matches!(self.peek(), Some(Token::Dedent) | None) {
                         else_body.push(self.parse_statement()?);
                     }
+                    
+                    // Consume Dedent if present
+                    if matches!(self.peek(), Some(Token::Dedent)) {
+                        self.next();
+                    }
+                    
                     Some(else_body)
                 } else {
                     None
@@ -273,20 +411,48 @@ impl<'a> Parser<'a> {
                 self.expect(Token::In)?;
                 let iter = self.parse_expr()?;
                 self.expect(Token::Colon)?;
+                
+                // Expect Indent token after colon
+                if !matches!(self.peek(), Some(Token::Indent)) {
+                    return Err("Expected indented block after ':'".to_string());
+                }
+                self.next(); // consume Indent
+                
                 let mut body = Vec::new();
-                while !matches!(self.peek(), Some(Token::Fn) | Some(Token::At) | None) {
+                // Parse for body until Dedent
+                while !matches!(self.peek(), Some(Token::Dedent) | None) {
                     body.push(self.parse_statement()?);
                 }
+                
+                // Consume Dedent if present
+                if matches!(self.peek(), Some(Token::Dedent)) {
+                    self.next();
+                }
+                
                 Ok(Statement::For { var, iter, body })
             }
             Some(Token::While) => {
                 self.next();
                 let cond = self.parse_expr()?;
                 self.expect(Token::Colon)?;
+                
+                // Expect Indent token after colon
+                if !matches!(self.peek(), Some(Token::Indent)) {
+                    return Err("Expected indented block after ':'".to_string());
+                }
+                self.next(); // consume Indent
+                
                 let mut body = Vec::new();
-                while !matches!(self.peek(), Some(Token::Fn) | Some(Token::At) | None) {
+                // Parse while body until Dedent
+                while !matches!(self.peek(), Some(Token::Dedent) | None) {
                     body.push(self.parse_statement()?);
                 }
+                
+                // Consume Dedent if present
+                if matches!(self.peek(), Some(Token::Dedent)) {
+                    self.next();
+                }
+                
                 Ok(Statement::While { cond, body })
             }
             Some(Token::Break) => {
@@ -308,7 +474,29 @@ impl<'a> Parser<'a> {
     }
     
     fn parse_expr(&mut self) -> Result<Expr, String> {
-        self.parse_expr_or()
+        self.parse_expr_assign()
+    }
+    
+    fn parse_expr_assign(&mut self) -> Result<Expr, String> {
+        let mut left = self.parse_expr_or()?;
+        
+        // Handle assignment operators (lowest precedence)
+        while matches!(self.peek(), Some(Token::Assign) | Some(Token::PlusEq) | Some(Token::MinusEq) | Some(Token::StarEq) | Some(Token::SlashEq)) {
+            let op = self.peek().unwrap().clone();
+            self.next();
+            let right = self.parse_expr_or()?;
+            
+            left = match op {
+                Token::Assign => Expr::Assign(Box::new(left), Box::new(right)),
+                Token::PlusEq => Expr::AddAssign(Box::new(left), Box::new(right)),
+                Token::MinusEq => Expr::SubAssign(Box::new(left), Box::new(right)),
+                Token::StarEq => Expr::MulAssign(Box::new(left), Box::new(right)),
+                Token::SlashEq => Expr::DivAssign(Box::new(left), Box::new(right)),
+                _ => unreachable!(),
+            };
+        }
+        
+        Ok(left)
     }
     
     fn parse_expr_or(&mut self) -> Result<Expr, String> {
@@ -419,6 +607,20 @@ impl<'a> Parser<'a> {
     
     fn parse_expr_primary(&mut self) -> Result<Expr, String> {
         match self.next() {
+            Some(Token::New) => {
+                // Parse: new ClassName(args...)
+                let class_name = match self.next() {
+                    Some(Token::Ident(name)) => name.clone(),
+                    _ => return Err("Expected class name after 'new'".to_string()),
+                };
+                self.expect(Token::LParen)?;
+                let args = self.parse_comma_list(|p| p.parse_expr())?;
+                self.expect(Token::RParen)?;
+                Ok(Expr::New {
+                    class_name,
+                    args,
+                })
+            }
             Some(Token::Integer(n)) => Ok(Expr::Integer(*n)),
             Some(Token::Float(f)) => Ok(Expr::Float(*f)),
             Some(Token::String(s)) => Ok(Expr::String(s.clone())),

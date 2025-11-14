@@ -182,6 +182,14 @@ pub fn get_stdlib_functions() -> Vec<StdlibFunction> {
         description: "Converts integer to string".to_string(),
     });
 
+    // I/O functions
+    functions.push(StdlibFunction {
+        name: "print".to_string(),
+        params: vec![("value".to_string(), Type::Dynamic)],
+        return_type: Type::Dynamic, // Actually void, but Dynamic for now
+        description: "Prints a value to stdout".to_string(),
+    });
+
     functions
 }
 

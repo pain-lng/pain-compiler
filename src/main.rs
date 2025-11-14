@@ -1,7 +1,7 @@
 // Pain compiler CLI entry point
 
 use clap::{Parser, Subcommand};
-use pain_compiler::{parse, type_check_program, Interpreter, IrBuilder, CodeGenerator, Formatter, ErrorFormatter, DocGenerator};
+use pain_compiler::{parse, type_check_program, Interpreter, IrBuilder, CodeGenerator, MlirCodeGenerator, Formatter, ErrorFormatter, DocGenerator, Optimizer, llvm_tools};
 use std::fs;
 use std::path::PathBuf;
 
@@ -20,9 +20,21 @@ enum Commands {
         /// Input source file
         #[arg(short, long)]
         input: PathBuf,
-        /// Output file (optional)
+        /// Output file (optional, defaults to executable if --executable is set)
         #[arg(short, long)]
         output: Option<PathBuf>,
+        /// Generate executable instead of IR
+        #[arg(long)]
+        executable: bool,
+        /// Target triple (e.g., x86_64-unknown-linux-gnu)
+        #[arg(long)]
+        target: Option<String>,
+        /// Keep intermediate files (IR, object files)
+        #[arg(long)]
+        keep_intermediates: bool,
+        /// Backend to use: llvm (default) or mlir
+        #[arg(long, default_value = "llvm")]
+        backend: String,
     },
     /// Run a Pain source file
     Run {
@@ -52,10 +64,13 @@ enum Commands {
     Doc {
         /// Input source file
         #[arg(short, long)]
-        input: PathBuf,
+        input: Option<PathBuf>,
         /// Output file (optional, defaults to stdout)
         #[arg(short, long)]
         output: Option<PathBuf>,
+        /// Generate standard library documentation instead of source file
+        #[arg(long)]
+        stdlib: bool,
     },
 }
 
@@ -63,8 +78,8 @@ fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Build { input, output } => {
-            build(&input, output.as_ref())?;
+        Commands::Build { input, output, executable, target, keep_intermediates, backend } => {
+            build(&input, output.as_ref(), executable, target.as_deref(), keep_intermediates, &backend)?;
         }
         Commands::Run { input } => {
             run(&input)?;
@@ -75,15 +90,28 @@ fn main() -> anyhow::Result<()> {
         Commands::Format { input, output, stdout } => {
             format_file(&input, output.as_ref(), stdout)?;
         }
-        Commands::Doc { input, output } => {
-            generate_doc(&input, output.as_ref())?;
+        Commands::Doc { input, output, stdlib } => {
+            if stdlib {
+                generate_stdlib_doc(output.as_ref())?;
+            } else if let Some(input) = input {
+                generate_doc(&input, output.as_ref())?;
+            } else {
+                return Err(anyhow::anyhow!("Either --input or --stdlib must be specified"));
+            }
         }
     }
 
     Ok(())
 }
 
-fn build(input: &PathBuf, output: Option<&PathBuf>) -> anyhow::Result<()> {
+fn build(
+    input: &PathBuf,
+    output: Option<&PathBuf>,
+    executable: bool,
+    target: Option<&str>,
+    keep_intermediates: bool,
+    backend: &str,
+) -> anyhow::Result<()> {
     println!("Building: {:?}", input);
     
     let source = fs::read_to_string(input)?;
@@ -100,27 +128,88 @@ fn build(input: &PathBuf, output: Option<&PathBuf>) -> anyhow::Result<()> {
     
     // Build IR
     let ir_builder = IrBuilder::new();
-    let ir = ir_builder.build(&program);
+    let mut ir = ir_builder.build(&program);
     
-    // Generate LLVM IR
-    let codegen = CodeGenerator::new(ir);
-    let llvm_ir = codegen.generate();
+    // Optimize IR
+    println!("Running optimizations...");
+    ir = Optimizer::optimize(ir);
+    println!("✓ Optimizations completed");
     
-    if let Some(output) = output {
-        println!("Output: {:?}", output);
-        fs::write(output, llvm_ir)?;
-        println!("✓ LLVM IR generated successfully");
-    } else {
-        println!("⚠ No output file specified, skipping code generation");
-        println!("\nGenerated LLVM IR:\n{}", llvm_ir);
+    // Generate code based on backend
+    match backend.to_lowercase().as_str() {
+        "mlir" => {
+            let mlir_codegen = MlirCodeGenerator::new(ir);
+            let mlir_ir = mlir_codegen.generate();
+            
+            if executable {
+                return Err(anyhow::anyhow!("MLIR backend does not support executable generation yet. Use --backend llvm for executables."));
+            }
+            
+            if let Some(output) = output {
+                println!("Output: {:?}", output);
+                fs::write(output, mlir_ir)?;
+                println!("✓ MLIR generated successfully");
+            } else {
+                println!("⚠ No output file specified, skipping code generation");
+                println!("\nGenerated MLIR:\n{}", mlir_ir);
+            }
+        }
+        "llvm" | _ => {
+            // Determine target triple
+            let target_triple = target.map(|s| s.to_string()).unwrap_or_else(|| {
+                let detected = llvm_tools::detect_target_triple();
+                println!("Using target triple: {}", detected);
+                detected
+            });
+            
+            // Generate LLVM IR
+            let codegen = CodeGenerator::new(ir);
+            let llvm_ir = codegen.generate_with_target(Some(&target_triple));
+            
+            if executable {
+                // Generate executable
+                let executable_path = output
+                    .map(|p| p.to_path_buf())
+                    .unwrap_or_else(|| {
+                        // Default to input filename without extension + .exe on Windows
+                        let mut path = input.clone();
+                        path.set_extension("");
+                        #[cfg(target_os = "windows")]
+                        path.set_extension("exe");
+                        path
+                    });
+                
+                // Create temporary LLVM IR file
+                let llvm_ir_path = executable_path.with_extension("ll");
+                fs::write(&llvm_ir_path, llvm_ir)?;
+                
+                // Compile and link
+                llvm_tools::compile_to_executable(
+                    &llvm_ir_path,
+                    &executable_path,
+                    Some(&target_triple),
+                    keep_intermediates,
+                )?;
+                
+                println!("✓ Executable built successfully: {:?}", executable_path);
+            } else {
+                // Just generate LLVM IR
+                if let Some(output) = output {
+                    println!("Output: {:?}", output);
+                    fs::write(output, llvm_ir)?;
+                    println!("✓ LLVM IR generated successfully");
+                } else {
+                    println!("⚠ No output file specified, skipping code generation");
+                    println!("\nGenerated LLVM IR:\n{}", llvm_ir);
+                }
+            }
+        }
     }
     
     Ok(())
 }
 
 fn run(input: &PathBuf) -> anyhow::Result<()> {
-    println!("Running: {:?}", input);
-    
     let source = fs::read_to_string(input)?;
     let program = parse(&source).map_err(|e| anyhow::anyhow!("Parse error: {}", e))?;
     
@@ -135,8 +224,18 @@ fn run(input: &PathBuf) -> anyhow::Result<()> {
     let mut interpreter = Interpreter::new()
         .map_err(|e| anyhow::anyhow!("Failed to create interpreter: {}", e))?;
     
-    interpreter.interpret(&program)
+    let result = interpreter.interpret(&program)
         .map_err(|e| anyhow::anyhow!("Runtime error: {:?}", e))?;
+    
+    // Print result (for benchmarks and CLI usage)
+    match result {
+        pain_runtime::Value::Int(i) => println!("{}", i),
+        pain_runtime::Value::Float(f) => println!("{}", f),
+        pain_runtime::Value::Bool(b) => println!("{}", b),
+        pain_runtime::Value::String(s) => println!("{}", s),
+        pain_runtime::Value::None => {},
+        pain_runtime::Value::Object(_) => println!("[Object]"),
+    }
     
     Ok(())
 }
@@ -194,6 +293,22 @@ fn generate_doc(input: &PathBuf, output: Option<&PathBuf>) -> anyhow::Result<()>
     if let Some(output) = output {
         fs::write(output, doc)?;
         println!("✓ Documentation written to {:?}", output);
+    } else {
+        print!("{}", doc);
+    }
+    
+    Ok(())
+}
+
+fn generate_stdlib_doc(output: Option<&PathBuf>) -> anyhow::Result<()> {
+    println!("Generating standard library documentation");
+    
+    // Generate stdlib documentation
+    let doc = DocGenerator::generate_stdlib();
+    
+    if let Some(output) = output {
+        fs::write(output, doc)?;
+        println!("✓ Standard library documentation written to {:?}", output);
     } else {
         print!("{}", doc);
     }

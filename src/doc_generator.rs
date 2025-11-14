@@ -1,6 +1,7 @@
 // Documentation generator module
 
 use crate::ast::*;
+use crate::stdlib::{get_stdlib_functions, StdlibFunction};
 
 /// Generate markdown documentation from a Pain program
 pub struct DocGenerator;
@@ -19,6 +20,9 @@ impl DocGenerator {
                 Item::Function(func) => {
                     output.push_str(&Self::format_function(func));
                     output.push_str("\n\n");
+                }
+                Item::Class(_class) => {
+                    // TODO: Format classes in documentation
                 }
             }
         }
@@ -118,6 +122,117 @@ impl DocGenerator {
             Type::Tensor(inner, dims) => format!("Tensor[{}, {:?}]", Self::format_type(inner), dims),
             Type::Named(name) => name.clone(),
         }
+    }
+    
+    /// Generate markdown documentation for standard library
+    pub fn generate_stdlib() -> String {
+        let mut output = String::new();
+        
+        output.push_str("# Pain Standard Library\n\n");
+        output.push_str("This document describes all built-in functions available in the Pain language.\n\n");
+        output.push_str("---\n\n");
+        
+        let functions = get_stdlib_functions();
+        
+        // Group functions by category
+        let mut math_functions = Vec::new();
+        let mut string_functions = Vec::new();
+        let mut io_functions = Vec::new();
+        
+        for func in &functions {
+            if func.name == "print" {
+                io_functions.push(func);
+            } else if matches!(func.name.as_str(), "abs" | "min" | "max" | "sqrt" | "pow" | "sin" | "cos" | "floor" | "ceil") {
+                math_functions.push(func);
+            } else {
+                string_functions.push(func);
+            }
+        }
+        
+        // Math functions
+        if !math_functions.is_empty() {
+            output.push_str("## Math Functions\n\n");
+            for func in &math_functions {
+                output.push_str(&Self::format_stdlib_function(func));
+                output.push_str("\n");
+            }
+            output.push_str("\n");
+        }
+        
+        // String functions
+        if !string_functions.is_empty() {
+            output.push_str("## String Functions\n\n");
+            for func in &string_functions {
+                output.push_str(&Self::format_stdlib_function(func));
+                output.push_str("\n");
+            }
+            output.push_str("\n");
+        }
+        
+        // I/O functions
+        if !io_functions.is_empty() {
+            output.push_str("## I/O Functions\n\n");
+            for func in &io_functions {
+                output.push_str(&Self::format_stdlib_function(func));
+                output.push_str("\n");
+            }
+            output.push_str("\n");
+        }
+        
+        output
+    }
+    
+    /// Format a standard library function as markdown
+    fn format_stdlib_function(func: &StdlibFunction) -> String {
+        let mut output = String::new();
+        
+        // Function name as heading
+        output.push_str(&format!("### `{}`\n\n", func.name));
+        
+        // Description
+        output.push_str(&func.description);
+        output.push_str("\n\n");
+        
+        // Signature
+        output.push_str("**Signature:**\n");
+        output.push_str("```pain\n");
+        output.push_str(&Self::format_stdlib_signature(func));
+        output.push_str("\n```\n\n");
+        
+        // Parameters
+        if !func.params.is_empty() {
+            output.push_str("**Parameters:**\n");
+            for (name, ty) in &func.params {
+                output.push_str(&format!("- `{}`: {}\n", name, Self::format_type(ty)));
+            }
+            output.push_str("\n");
+        }
+        
+        // Return type
+        output.push_str("**Returns:**\n");
+        output.push_str(&format!("- `{}`\n\n", Self::format_type(&func.return_type)));
+        
+        output
+    }
+    
+    /// Format standard library function signature
+    fn format_stdlib_signature(func: &StdlibFunction) -> String {
+        let mut sig = String::new();
+        
+        sig.push_str("fn ");
+        sig.push_str(&func.name);
+        sig.push('(');
+        
+        let params: Vec<String> = func.params.iter()
+            .map(|(name, ty)| format!("{}: {}", name, Self::format_type(ty)))
+            .collect();
+        sig.push_str(&params.join(", "));
+        sig.push(')');
+        
+        sig.push_str(" -> ");
+        sig.push_str(&Self::format_type(&func.return_type));
+        
+        sig
     }
 }
 

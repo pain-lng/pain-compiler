@@ -11,7 +11,8 @@ pub struct Program {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Item {
     Function(Function),
-    // Future: Class, Import, etc.
+    Class(Class),
+    // Future: Import, etc.
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -22,6 +23,24 @@ pub struct Function {
     pub params: Vec<Parameter>,
     pub return_type: Option<Type>,
     pub body: Vec<Statement>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Class {
+    pub doc: Option<String>, // Doc comment
+    pub attrs: Vec<Attribute>,
+    pub name: String,
+    pub fields: Vec<ClassField>,
+    pub methods: Vec<Function>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ClassField {
+    pub name: String,
+    pub ty: Type,
+    pub mutable: bool,
     pub span: Span,
 }
 
@@ -133,4 +152,10 @@ pub enum Expr {
     
     // Type checking
     IsInstance(Box<Expr>, Type),
+    
+    // Object creation
+    New {
+        class_name: String,
+        args: Vec<Expr>,
+    },
 }
