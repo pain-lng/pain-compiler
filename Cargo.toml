@@ -1,0 +1,23 @@
+[package]
+name = "pain-compiler"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[lib]
+name = "pain_compiler"
+path = "src/lib.rs"
+
+[dependencies]
+logos.workspace = true
+lalrpop-util.workspace = true
+# inkwell.workspace = true  # Enable when LLVM is installed
+thiserror.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+
+# lalrpop will be added later when needed
+# [build-dependencies]
+# lalrpop.workspace = true
+

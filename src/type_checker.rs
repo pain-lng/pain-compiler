@@ -1,0 +1,316 @@
+// Type checker module - type inference and type checking
+
+use crate::ast::*;
+use std::collections::HashMap;
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum TypeError {
+    UndefinedVariable(String),
+    TypeMismatch { expected: Type, found: Type },
+    CannotInferType(String),
+    InvalidOperation { op: String, left: Type, right: Option<Type> },
+}
+
+pub type TypeResult<T> = Result<T, TypeError>;
+
+#[derive(Debug, Clone)]
+pub struct TypeContext {
+    variables: HashMap<String, Type>,
+    functions: HashMap<String, Function>,
+}
+
+impl TypeContext {
+    pub fn new() -> Self {
+        Self {
+            variables: HashMap::new(),
+            functions: HashMap::new(),
+        }
+    }
+    
+    pub fn add_variable(&mut self, name: String, ty: Type) {
+        self.variables.insert(name, ty);
+    }
+    
+    pub fn get_variable(&self, name: &str) -> Option<&Type> {
+        self.variables.get(name)
+    }
+    
+    pub fn add_function(&mut self, name: String, func: Function) {
+        self.functions.insert(name, func);
+    }
+}
+
+pub fn type_check_program(program: &Program) -> TypeResult<()> {
+    let mut ctx = TypeContext::new();
+    
+    // First pass: collect function signatures
+    for item in &program.items {
+        let Item::Function(func) = item;
+        ctx.add_function(func.name.clone(), func.clone());
+    }
+    
+    // Second pass: type check functions
+    for item in &program.items {
+        let Item::Function(func) = item;
+        type_check_function(&mut ctx, func)?;
+    }
+    
+    Ok(())
+}
+
+fn type_check_function(ctx: &mut TypeContext, func: &Function) -> TypeResult<()> {
+    // Create new scope for function parameters
+    let mut func_ctx = ctx.clone();
+    
+    // Add parameters to context
+    for param in &func.params {
+        func_ctx.add_variable(param.name.clone(), param.ty.clone());
+    }
+    
+    // Type check body
+    for stmt in &func.body {
+        type_check_statement(&mut func_ctx, stmt)?;
+    }
+    
+    // Check return type if specified
+    if let Some(_expected_return) = &func.return_type {
+        // TODO: Check that all return statements match expected_return
+    }
+    
+    Ok(())
+}
+
+fn type_check_statement(ctx: &mut TypeContext, stmt: &Statement) -> TypeResult<Type> {
+    match stmt {
+        Statement::Expr(expr) => {
+            infer_expr_type(ctx, expr)?;
+            Ok(Type::Dynamic) // Expression statements don't have a type
+        }
+        Statement::Let { name, ty, init, .. } => {
+            let init_type = infer_expr_type(ctx, init)?;
+            
+            let var_type = if let Some(annotated_type) = ty {
+                // Check that inferred type matches annotated type
+                if !types_compatible(&init_type, annotated_type) {
+                    return Err(TypeError::TypeMismatch {
+                        expected: annotated_type.clone(),
+                        found: init_type,
+                    });
+                }
+                annotated_type.clone()
+            } else {
+                // Infer type from initializer
+                init_type
+            };
+            
+            ctx.add_variable(name.clone(), var_type.clone());
+            Ok(var_type)
+        }
+        Statement::Return(expr) => {
+            if let Some(expr) = expr {
+                infer_expr_type(ctx, expr)
+            } else {
+                Ok(Type::Dynamic) // void return
+            }
+        }
+        Statement::If { cond, then, else_, .. } => {
+            let cond_type = infer_expr_type(ctx, cond)?;
+            if !types_compatible(&cond_type, &Type::Bool) {
+                return Err(TypeError::TypeMismatch {
+                    expected: Type::Bool,
+                    found: cond_type,
+                });
+            }
+            
+            // Type check branches
+            for stmt in then {
+                type_check_statement(ctx, stmt)?;
+            }
+            
+            if let Some(else_body) = else_ {
+                for stmt in else_body {
+                    type_check_statement(ctx, stmt)?;
+                }
+            }
+            
+            Ok(Type::Dynamic)
+        }
+        Statement::For { var, iter, body, .. } => {
+            let iter_type = infer_expr_type(ctx, iter)?;
+            // TODO: Check that iter_type is iterable (list, array, etc.)
+            
+            // Infer element type from iterator
+            let element_type = match &iter_type {
+                Type::List(inner) => *inner.clone(),
+                Type::Array(inner) => *inner.clone(),
+                _ => Type::Dynamic, // Fallback
+            };
+            
+            ctx.add_variable(var.clone(), element_type);
+            
+            for stmt in body {
+                type_check_statement(ctx, stmt)?;
+            }
+            
+            Ok(Type::Dynamic)
+        }
+        Statement::While { cond, body, .. } => {
+            let cond_type = infer_expr_type(ctx, cond)?;
+            if !types_compatible(&cond_type, &Type::Bool) {
+                return Err(TypeError::TypeMismatch {
+                    expected: Type::Bool,
+                    found: cond_type,
+                });
+            }
+            
+            for stmt in body {
+                type_check_statement(ctx, stmt)?;
+            }
+            
+            Ok(Type::Dynamic)
+        }
+        Statement::Break | Statement::Continue => Ok(Type::Dynamic),
+    }
+}
+
+fn infer_expr_type(ctx: &TypeContext, expr: &Expr) -> TypeResult<Type> {
+    match expr {
+        Expr::Integer(_) => Ok(Type::Int),
+        Expr::Float(_) => Ok(Type::Float64),
+        Expr::String(_) => Ok(Type::Str),
+        Expr::FString(_) => Ok(Type::Str),
+        Expr::Bool(_) => Ok(Type::Bool),
+        Expr::None => Ok(Type::Dynamic),
+        Expr::Ident(name) => {
+            ctx.get_variable(name)
+                .cloned()
+                .ok_or_else(|| TypeError::UndefinedVariable(name.clone()))
+        }
+        Expr::Add(left, right) | Expr::Sub(left, right) | Expr::Mul(left, right) | Expr::Div(left, right) | Expr::Mod(left, right) => {
+            let left_type = infer_expr_type(ctx, left)?;
+            let right_type = infer_expr_type(ctx, right)?;
+            infer_binary_op_type(&left_type, &right_type)
+        }
+        Expr::Eq(left, right) | Expr::Ne(left, right) | Expr::Lt(left, right) | Expr::Gt(left, right) | Expr::Le(left, right) | Expr::Ge(left, right) => {
+            let _left_type = infer_expr_type(ctx, left)?;
+            let _right_type = infer_expr_type(ctx, right)?;
+            Ok(Type::Bool)
+        }
+        Expr::And(left, right) | Expr::Or(left, right) => {
+            let left_type = infer_expr_type(ctx, left)?;
+            let right_type = infer_expr_type(ctx, right)?;
+            if types_compatible(&left_type, &Type::Bool) && types_compatible(&right_type, &Type::Bool) {
+                Ok(Type::Bool)
+            } else {
+                Err(TypeError::TypeMismatch {
+                    expected: Type::Bool,
+                    found: left_type,
+                })
+            }
+        }
+        Expr::Not(operand) => {
+            let op_type = infer_expr_type(ctx, operand)?;
+            if types_compatible(&op_type, &Type::Bool) {
+                Ok(Type::Bool)
+            } else {
+                Err(TypeError::TypeMismatch {
+                    expected: Type::Bool,
+                    found: op_type,
+                })
+            }
+        }
+        Expr::Neg(operand) => {
+            let op_type = infer_expr_type(ctx, operand)?;
+            match op_type {
+                Type::Int | Type::Float32 | Type::Float64 => Ok(op_type),
+                _ => Err(TypeError::InvalidOperation {
+                    op: "negation".to_string(),
+                    left: op_type,
+                    right: None,
+                }),
+            }
+        }
+        Expr::Call { callee, args: _ } => {
+            let _callee_type = infer_expr_type(ctx, callee)?;
+            // TODO: Look up function signature and check arguments
+            // For now, return Dynamic
+            Ok(Type::Dynamic)
+        }
+        Expr::Index(container, index) => {
+            let container_type = infer_expr_type(ctx, container)?;
+            let _index_type = infer_expr_type(ctx, index)?;
+            
+            match container_type {
+                Type::List(inner) | Type::Array(inner) => Ok(*inner),
+                Type::Map(_, value) => Ok(*value),
+                _ => Err(TypeError::InvalidOperation {
+                    op: "indexing".to_string(),
+                    left: container_type,
+                    right: None,
+                }),
+            }
+        }
+        Expr::Member(obj, _field) => {
+            let _obj_type = infer_expr_type(ctx, obj)?;
+            // TODO: Look up field type in struct/class
+            Ok(Type::Dynamic)
+        }
+        Expr::IsInstance(expr, _ty) => {
+            let _expr_type = infer_expr_type(ctx, expr)?;
+            // isinstance always returns bool
+            Ok(Type::Bool)
+        }
+        Expr::Assign(left, right) | Expr::AddAssign(left, right) | Expr::SubAssign(left, right) | Expr::MulAssign(left, right) | Expr::DivAssign(left, right) => {
+            let _left_type = infer_expr_type(ctx, left)?;
+            let right_type = infer_expr_type(ctx, right)?;
+            Ok(right_type)
+        }
+    }
+}
+
+fn infer_binary_op_type(left: &Type, right: &Type) -> TypeResult<Type> {
+    match (left, right) {
+        (Type::Int, Type::Int) => Ok(Type::Int),
+        (Type::Float32, Type::Float32) => Ok(Type::Float32),
+        (Type::Float64, Type::Float64) => Ok(Type::Float64),
+        (Type::Int, Type::Float32) | (Type::Float32, Type::Int) => Ok(Type::Float32),
+        (Type::Int, Type::Float64) | (Type::Float64, Type::Int) => Ok(Type::Float64),
+        (Type::Float32, Type::Float64) | (Type::Float64, Type::Float32) => Ok(Type::Float64),
+        (Type::Dynamic, _) | (_, Type::Dynamic) => Ok(Type::Dynamic),
+        _ => Err(TypeError::InvalidOperation {
+            op: "arithmetic".to_string(),
+            left: left.clone(),
+            right: Some(right.clone()),
+        }),
+    }
+}
+
+fn types_compatible(actual: &Type, expected: &Type) -> bool {
+    match (actual, expected) {
+        (Type::Dynamic, _) | (_, Type::Dynamic) => true,
+        (a, b) => a == b,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_infer_integer_literal() {
+        let ctx = TypeContext::new();
+        let expr = Expr::Integer(42);
+        assert_eq!(infer_expr_type(&ctx, &expr).unwrap(), Type::Int);
+    }
+
+    #[test]
+    fn test_infer_binary_op() {
+        let ctx = TypeContext::new();
+        let expr = Expr::Add(
+            Box::new(Expr::Integer(1)),
+            Box::new(Expr::Integer(2)),
+        );
+        assert_eq!(infer_expr_type(&ctx, &expr).unwrap(), Type::Int);
+    }
+}
+
