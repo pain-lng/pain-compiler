@@ -1,8 +1,11 @@
 // AST module - Abstract Syntax Tree node types
 
+use crate::span::Span;
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Program {
     pub items: Vec<Item>,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -13,11 +16,13 @@ pub enum Item {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Function {
+    pub doc: Option<String>, // Doc comment (Python-style)
     pub attrs: Vec<Attribute>,
     pub name: String,
     pub params: Vec<Parameter>,
     pub return_type: Option<Type>,
     pub body: Vec<Statement>,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq)]

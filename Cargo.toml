@@ -11,13 +11,13 @@ path = "src/lib.rs"
 
 [dependencies]
 logos.workspace = true
-lalrpop-util.workspace = true
+# lalrpop-util.workspace = true  # Reserved for future migration
 # inkwell.workspace = true  # Enable when LLVM is installed
 thiserror.workspace = true
 anyhow.workspace = true
 clap.workspace = true
+pain-runtime = { path = "../pain-runtime" }
 
-# lalrpop will be added later when needed
 # [build-dependencies]
-# lalrpop.workspace = true
+# lalrpop.workspace = true  # Reserved for future migration
 

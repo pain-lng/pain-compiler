@@ -3,6 +3,7 @@
 
 use crate::ast::*;
 use crate::lexer::Token;
+use crate::span::{Span, Position};
 use logos::Logos;
 
 pub fn parse(source: &str) -> Result<Program, String> {
@@ -55,11 +56,13 @@ impl<'a> Parser<'a> {
         while self.peek().is_some() {
             items.push(self.parse_item()?);
         }
-        Ok(Program { items })
+        // Create a span for the entire program (placeholder for now)
+        let span = Span::single(Position::start());
+        Ok(Program { items, span })
     }
     
     fn parse_item(&mut self) -> Result<Item, String> {
-        if matches!(self.peek(), Some(Token::Fn) | Some(Token::At)) {
+        if matches!(self.peek(), Some(Token::Fn) | Some(Token::At) | Some(Token::DocComment(_))) {
             Ok(Item::Function(self.parse_function()?))
         } else {
             Err("Expected function or attribute".to_string())
@@ -67,6 +70,17 @@ impl<'a> Parser<'a> {
     }
     
     fn parse_function(&mut self) -> Result<Function, String> {
+        // Parse doc comment if present (before attributes)
+        let doc = if matches!(self.peek(), Some(Token::DocComment(_))) {
+            if let Some(Token::DocComment(doc_str)) = self.next() {
+                Some(doc_str.clone())
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        
         let mut attrs = Vec::new();
         while matches!(self.peek(), Some(Token::At)) {
             attrs.push(self.parse_attribute()?);
@@ -93,16 +107,20 @@ impl<'a> Parser<'a> {
         self.expect(Token::Colon)?;
         
         let mut body = Vec::new();
-        while !matches!(self.peek(), Some(Token::Fn) | Some(Token::At) | None) {
+        while !matches!(self.peek(), Some(Token::Fn) | Some(Token::At) | Some(Token::DocComment(_)) | None) {
             body.push(self.parse_statement()?);
         }
         
+        // Create a span for the function (placeholder for now)
+        let span = Span::single(Position::start());
         Ok(Function {
+            doc,
             attrs,
             name,
             params,
             return_type,
             body,
+            span,
         })
     }
     

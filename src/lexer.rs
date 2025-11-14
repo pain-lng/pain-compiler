@@ -6,6 +6,22 @@ use logos::Logos;
 #[logos(skip r"[ \t\r\n\f]+")] // Skip whitespace
 #[logos(skip r"#.*")] // Skip comments
 pub enum Token {
+    // Doc comments must come before String to match first
+    // Doc comments (Python-style triple quotes)
+    // Matches """...""" including multiline
+    // Using a custom regex that handles newlines
+    #[regex(r#""""[^"]*""""#, |lex| {
+        let s = lex.slice();
+        // Remove triple quotes (first 3 and last 3 chars)
+        if s.len() >= 6 {
+            let content = &s[3..s.len()-3];
+            // Trim leading/trailing whitespace but preserve internal formatting
+            content.trim().to_string()
+        } else {
+            String::new()
+        }
+    })]
+    DocComment(String),
     // Keywords
     #[token("fn")]
     Fn,
@@ -233,5 +249,12 @@ mod tests {
         let mut lexer = Token::lexer("fn # comment\nmain");
         assert_eq!(lexer.next(), Some(Ok(Token::Fn)));
         assert_eq!(lexer.next(), Some(Ok(Token::Ident("main".to_string()))));
+    }
+
+    #[test]
+    fn test_doc_comment() {
+        let mut lexer = Token::lexer(r#""""This is a doc comment."""fn"#);
+        assert_eq!(lexer.next(), Some(Ok(Token::DocComment("This is a doc comment.".to_string()))));
+        assert_eq!(lexer.next(), Some(Ok(Token::Fn)));
     }
 }
