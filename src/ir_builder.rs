@@ -984,3 +984,105 @@ impl Default for IrBuilder {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::parse;
+    use crate::type_check_program;
+
+    #[test]
+    fn test_build_simple_function() {
+        let source = "fn add(a: int, b: int) -> int:
+    return a + b";
+        let program = parse(source).unwrap();
+        type_check_program(&program).unwrap();
+        let builder = IrBuilder::new();
+        let ir = builder.build(&program);
+        assert!(!ir.functions.is_empty());
+    }
+
+    #[test]
+    fn test_build_function_with_control_flow() {
+        let source = "fn abs(x: int) -> int:
+    if x < 0:
+        return -x
+    else:
+        return x";
+        let program = parse(source).unwrap();
+        type_check_program(&program).unwrap();
+        let builder = IrBuilder::new();
+        let ir = builder.build(&program);
+        assert!(!ir.functions.is_empty());
+        let func = &ir.functions[0];
+        assert!(func.blocks.len() >= 2, "Should have multiple blocks for if/else");
+    }
+
+    #[test]
+    fn test_build_while_loop() {
+        let source = "fn factorial(n: int) -> int:
+    let result = 1
+    let i = 1
+    while i <= n:
+        result = result * i
+        i = i + 1
+    return result";
+        let program = parse(source).unwrap();
+        type_check_program(&program).unwrap();
+        let builder = IrBuilder::new();
+        let ir = builder.build(&program);
+        assert!(!ir.functions.is_empty());
+        let func = &ir.functions[0];
+        assert!(func.blocks.len() >= 3, "Should have loop blocks");
+    }
+
+    #[test]
+    fn test_build_function_call() {
+        let source = "fn add(a: int, b: int) -> int:
+    return a + b
+
+fn main():
+    return add(5, 3)";
+        let program = parse(source).unwrap();
+        type_check_program(&program).unwrap();
+        let builder = IrBuilder::new();
+        let ir = builder.build(&program);
+        assert_eq!(ir.functions.len(), 2);
+    }
+
+    #[test]
+    fn test_build_class_struct() {
+        let source = "class Point:
+    let x: int
+    let y: int";
+        let program = parse(source).unwrap();
+        type_check_program(&program).unwrap();
+        let builder = IrBuilder::new();
+        let ir = builder.build(&program);
+        assert!(!ir.structs.is_empty(), "Should have struct for class");
+    }
+
+    #[test]
+    fn test_build_multiple_functions() {
+        let source = "fn func1(): return 1
+
+fn func2(): return 2";
+        let program = parse(source).unwrap();
+        type_check_program(&program).unwrap();
+        let builder = IrBuilder::new();
+        let ir = builder.build(&program);
+        assert_eq!(ir.functions.len(), 2);
+    }
+
+    #[test]
+    fn test_build_ir_with_parameters() {
+        let source = "fn test(a: int, b: int, c: int) -> int:
+    return a + b + c";
+        let program = parse(source).unwrap();
+        type_check_program(&program).unwrap();
+        let builder = IrBuilder::new();
+        let ir = builder.build(&program);
+        let func = &ir.functions[0];
+        assert_eq!(func.params.len(), 3);
+    }
+}
+

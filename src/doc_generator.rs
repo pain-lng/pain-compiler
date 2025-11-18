@@ -273,5 +273,70 @@ mod tests {
         assert!(doc.contains("Adds two numbers together."));
         assert!(doc.contains("fn add"));
     }
+
+    #[test]
+    fn test_generate_doc_with_attributes() {
+        let program = Program {
+            items: vec![
+                Item::Function(Function {
+                    doc: Some("Inline function.".to_string()),
+                    attrs: vec![Attribute {
+                        name: "inline".to_string(),
+                        args: vec![],
+                    }],
+                    name: "helper".to_string(),
+                    params: vec![],
+                    return_type: Some(Type::Int),
+                    body: vec![],
+                    span: Span::single(Position::start()),
+                }),
+            ],
+            span: Span::single(Position::start()),
+        };
+        
+        let doc = DocGenerator::generate(&program);
+        assert!(doc.contains("## `helper`"));
+        assert!(doc.contains("@inline"));
+    }
+
+    #[test]
+    fn test_generate_doc_without_return_type() {
+        let program = Program {
+            items: vec![
+                Item::Function(Function {
+                    doc: None,
+                    attrs: vec![],
+                    name: "void_func".to_string(),
+                    params: vec![],
+                    return_type: None,
+                    body: vec![],
+                    span: Span::single(Position::start()),
+                }),
+            ],
+            span: Span::single(Position::start()),
+        };
+        
+        let doc = DocGenerator::generate(&program);
+        assert!(doc.contains("## `void_func`"));
+        assert!(!doc.contains("**Returns:**"));
+    }
+
+    #[test]
+    fn test_generate_stdlib_doc() {
+        let doc = DocGenerator::generate_stdlib();
+        assert!(doc.contains("# Pain Standard Library"));
+        assert!(doc.contains("print") || doc.contains("len") || doc.contains("abs"));
+    }
+
+    #[test]
+    fn test_format_type() {
+        assert_eq!(DocGenerator::format_type(&Type::Int), "int");
+        assert_eq!(DocGenerator::format_type(&Type::Str), "str");
+        assert_eq!(DocGenerator::format_type(&Type::List(Box::new(Type::Int))), "list[int]");
+        assert_eq!(
+            DocGenerator::format_type(&Type::Map(Box::new(Type::Str), Box::new(Type::Int))),
+            "map[str, int]"
+        );
+    }
 }
 

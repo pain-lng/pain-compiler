@@ -403,4 +403,141 @@ mod tests {
         assert_eq!(lexer.next(), Some(Ok(Token::DocComment("This is a doc comment.".to_string()))));
         assert_eq!(lexer.next(), Some(Ok(Token::Fn)));
     }
+
+    #[test]
+    fn test_indentation_tokens() {
+        let source = "fn test():\n    let x = 10\n    let y = 20";
+        let tokens: Vec<_> = tokenize_with_indentation(source)
+            .into_iter()
+            .filter_map(|r| r.ok())
+            .map(|t| t.token)
+            .collect();
+        
+        assert!(tokens.contains(&Token::Indent));
+        assert!(tokens.contains(&Token::Fn));
+        assert!(tokens.contains(&Token::Let));
+    }
+
+    #[test]
+    fn test_nested_indentation() {
+        let source = "fn test():\n    if True:\n        return 1\n    return 0";
+        let tokens: Vec<_> = tokenize_with_indentation(source)
+            .into_iter()
+            .filter_map(|r| r.ok())
+            .map(|t| t.token)
+            .collect();
+        
+        let indent_count = tokens.iter().filter(|t| matches!(t, Token::Indent)).count();
+        assert!(indent_count >= 2, "Should have multiple indents for nested blocks");
+    }
+
+    #[test]
+    fn test_dedent_tokens() {
+        let source = "fn test():\n    let x = 10\nreturn 0";
+        let tokens: Vec<_> = tokenize_with_indentation(source)
+            .into_iter()
+            .filter_map(|r| r.ok())
+            .map(|t| t.token)
+            .collect();
+        
+        assert!(tokens.contains(&Token::Dedent), "Should have dedent when indentation decreases");
+    }
+
+    #[test]
+    fn test_string_escaping() {
+        let mut lexer = Token::lexer(r#""hello\nworld""#);
+        let token = lexer.next().unwrap().unwrap();
+        if let Token::String(s) = token {
+            assert!(s.contains("\\n"), "Should preserve escape sequences");
+        } else {
+            panic!("Expected String token");
+        }
+    }
+
+    #[test]
+    fn test_fstring_with_expression() {
+        let mut lexer = Token::lexer(r#"f"Hello {name}""#);
+        let token = lexer.next().unwrap().unwrap();
+        if let Token::FString(s) = token {
+            assert!(s.contains("{name}"), "F-string should contain expression");
+        } else {
+            panic!("Expected FString token");
+        }
+    }
+
+    #[test]
+    fn test_float_scientific_notation() {
+        let mut lexer = Token::lexer("1.5e10 2.3E-5");
+        assert_eq!(lexer.next(), Some(Ok(Token::Float(1.5e10))));
+        assert_eq!(lexer.next(), Some(Ok(Token::Float(2.3e-5))));
+    }
+
+    #[test]
+    fn test_comparison_operators() {
+        let mut lexer = Token::lexer("<= >= == !=");
+        assert_eq!(lexer.next(), Some(Ok(Token::Le)));
+        assert_eq!(lexer.next(), Some(Ok(Token::Ge)));
+        assert_eq!(lexer.next(), Some(Ok(Token::EqEq)));
+        assert_eq!(lexer.next(), Some(Ok(Token::Ne)));
+    }
+
+    #[test]
+    fn test_assignment_operators() {
+        let mut lexer = Token::lexer("+= -= *= /=");
+        assert_eq!(lexer.next(), Some(Ok(Token::PlusEq)));
+        assert_eq!(lexer.next(), Some(Ok(Token::MinusEq)));
+        assert_eq!(lexer.next(), Some(Ok(Token::StarEq)));
+        assert_eq!(lexer.next(), Some(Ok(Token::SlashEq)));
+    }
+
+    #[test]
+    fn test_logical_operators() {
+        let mut lexer = Token::lexer("&& || !");
+        assert_eq!(lexer.next(), Some(Ok(Token::And)));
+        assert_eq!(lexer.next(), Some(Ok(Token::Or)));
+        assert_eq!(lexer.next(), Some(Ok(Token::Not)));
+    }
+
+    #[test]
+    fn test_type_keywords() {
+        let mut lexer = Token::lexer("int str float32 float64 bool list array map Tensor");
+        assert_eq!(lexer.next(), Some(Ok(Token::Int)));
+        assert_eq!(lexer.next(), Some(Ok(Token::Str)));
+        assert_eq!(lexer.next(), Some(Ok(Token::Float32)));
+        assert_eq!(lexer.next(), Some(Ok(Token::Float64)));
+        assert_eq!(lexer.next(), Some(Ok(Token::Bool)));
+        assert_eq!(lexer.next(), Some(Ok(Token::List)));
+        assert_eq!(lexer.next(), Some(Ok(Token::Array)));
+        assert_eq!(lexer.next(), Some(Ok(Token::Map)));
+        assert_eq!(lexer.next(), Some(Ok(Token::Tensor)));
+    }
+
+    #[test]
+    fn test_boolean_literals() {
+        let mut lexer = Token::lexer("true false");
+        assert_eq!(lexer.next(), Some(Ok(Token::True)));
+        assert_eq!(lexer.next(), Some(Ok(Token::False)));
+    }
+
+    #[test]
+    fn test_none_literal() {
+        let mut lexer = Token::lexer("None");
+        assert_eq!(lexer.next(), Some(Ok(Token::None)));
+    }
+
+    #[test]
+    fn test_empty_string() {
+        let mut lexer = Token::lexer(r#""""#);
+        assert_eq!(lexer.next(), Some(Ok(Token::String("".to_string()))));
+    }
+
+    #[test]
+    fn test_span_tracking() {
+        let source = "fn test()";
+        let tokens = tokenize_with_indentation(source);
+        assert!(!tokens.is_empty());
+        if let Ok(token_span) = &tokens[0] {
+            assert!(token_span.span.line() > 0);
+        }
+    }
 }

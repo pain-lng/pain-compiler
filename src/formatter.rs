@@ -462,3 +462,128 @@ impl Default for Formatter {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::parse;
+    use crate::span::{Span, Position};
+
+    #[test]
+    fn test_format_simple_function() {
+        let source = "fn test() -> int:
+    return 42";
+        let program = parse(source).unwrap();
+        let formatted = Formatter::format(&program);
+        assert!(formatted.contains("fn test"));
+        assert!(formatted.contains("return 42"));
+    }
+
+    #[test]
+    fn test_format_function_with_params() {
+        let source = "fn add(a: int, b: int) -> int:
+    return a + b";
+        let program = parse(source).unwrap();
+        let formatted = Formatter::format(&program);
+        assert!(formatted.contains("fn add"));
+        assert!(formatted.contains("a: int"));
+        assert!(formatted.contains("b: int"));
+    }
+
+    #[test]
+    fn test_format_if_statement() {
+        let source = "fn test(x: int) -> int:
+    if x > 0:
+        return 1
+    else:
+        return 0";
+        let program = parse(source).unwrap();
+        let formatted = Formatter::format(&program);
+        assert!(formatted.contains("if x > 0"));
+        assert!(formatted.contains("else"));
+    }
+
+    #[test]
+    fn test_format_while_loop() {
+        let source = "fn test():
+    let i = 0
+    while i < 10:
+        i = i + 1";
+        let program = parse(source).unwrap();
+        let formatted = Formatter::format(&program);
+        assert!(formatted.contains("while i < 10"));
+    }
+
+    #[test]
+    fn test_format_let_statement() {
+        let source = "fn test():
+    let x = 10
+    let y: int = 20";
+        let program = parse(source).unwrap();
+        let formatted = Formatter::format(&program);
+        assert!(formatted.contains("let x = 10"));
+        assert!(formatted.contains("let y: int = 20"));
+    }
+
+    #[test]
+    fn test_format_list_literal() {
+        let source = "fn test() -> list[int]:
+    return [1, 2, 3]";
+        let program = parse(source).unwrap();
+        let formatted = Formatter::format(&program);
+        assert!(formatted.contains("[1, 2, 3]"));
+    }
+
+    #[test]
+    fn test_format_doc_comment() {
+        let program = Program {
+            items: vec![
+                Item::Function(Function {
+                    doc: Some("This is a test function.".to_string()),
+                    attrs: vec![],
+                    name: "test".to_string(),
+                    params: vec![],
+                    return_type: None,
+                    body: vec![],
+                    span: Span::single(Position::start()),
+                }),
+            ],
+            span: Span::single(Position::start()),
+        };
+        let formatted = Formatter::format(&program);
+        assert!(formatted.contains("\"\"\""));
+        assert!(formatted.contains("This is a test function."));
+    }
+
+    #[test]
+    fn test_format_attributes() {
+        let program = Program {
+            items: vec![
+                Item::Function(Function {
+                    doc: None,
+                    attrs: vec![Attribute {
+                        name: "inline".to_string(),
+                        args: vec![],
+                    }],
+                    name: "test".to_string(),
+                    params: vec![],
+                    return_type: None,
+                    body: vec![],
+                    span: Span::single(Position::start()),
+                }),
+            ],
+            span: Span::single(Position::start()),
+        };
+        let formatted = Formatter::format(&program);
+        assert!(formatted.contains("@inline"));
+    }
+
+    #[test]
+    fn test_format_binary_operations() {
+        let source = "fn test(a: int, b: int) -> int:
+    return a + b * c";
+        let program = parse(source).unwrap();
+        let formatted = Formatter::format(&program);
+        assert!(formatted.contains("a + b * c"));
+    }
+}
+

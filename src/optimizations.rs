@@ -14,6 +14,8 @@ impl Optimizer {
         // Run optimization passes in order
         ir = Self::constant_folding(&ir);
         ir = Self::common_subexpression_elimination(&ir);
+        ir = Self::loop_invariant_code_motion(&ir);
+        ir = Self::function_inlining(&ir);
         ir = Self::tail_call_optimization(&ir);
         ir = Self::dead_code_elimination(&ir);
         
@@ -663,6 +665,383 @@ impl Optimizer {
             Instruction::Intrinsic { args, .. } => args.clone(),
             
             _ => Vec::new(),
+        }
+    }
+    
+    /// Loop Invariant Code Motion: move loop-invariant instructions out of loops
+    fn loop_invariant_code_motion(ir: &IrProgram) -> IrProgram {
+        let mut new_ir = ir.clone();
+        
+        for func in &mut new_ir.functions {
+            // Find all loops in the function
+            let loops = Self::find_loops(func);
+            
+            for (header_block_id, body_blocks) in loops {
+                // Find loop-invariant instructions in body blocks
+                let mut invariant_instructions: Vec<(BlockId, usize, (ValueId, Instruction))> = Vec::new();
+                let mut loop_defined_values: HashSet<ValueId> = HashSet::new();
+                
+                // First pass: identify values defined in the loop
+                for &body_block_id in &body_blocks {
+                    if let Some(body_block) = func.blocks.iter().find(|b| b.id == body_block_id) {
+                        for (value_id, _) in &body_block.instructions {
+                            loop_defined_values.insert(*value_id);
+                        }
+                    }
+                }
+                
+                // Also include values from header block
+                if let Some(header_block) = func.blocks.iter().find(|b| b.id == header_block_id) {
+                    for (value_id, _) in &header_block.instructions {
+                        loop_defined_values.insert(*value_id);
+                    }
+                }
+                
+                // Second pass: find invariant instructions
+                for &body_block_id in &body_blocks {
+                    if let Some(body_block) = func.blocks.iter().find(|b| b.id == body_block_id) {
+                        for (idx, (value_id, instr)) in body_block.instructions.iter().enumerate() {
+                            // Check if instruction is loop-invariant
+                            if Self::is_loop_invariant(instr, &loop_defined_values) {
+                                invariant_instructions.push((body_block_id, idx, (*value_id, instr.clone())));
+                            } else {
+                                // This instruction uses loop-defined values, so mark its result as loop-defined
+                                loop_defined_values.insert(*value_id);
+                            }
+                        }
+                    }
+                }
+                
+                // Third pass: move invariant instructions to pre-header block
+                if !invariant_instructions.is_empty() {
+                    // Find or create pre-header block (block that jumps to header)
+                    let pre_header_id = Self::find_or_create_pre_header(func, header_block_id);
+                    
+                    // Move invariant instructions to pre-header
+                    if let Some(pre_header) = func.blocks.iter_mut().find(|b| b.id == pre_header_id) {
+                        // Collect instructions to move (in reverse order to maintain dependencies)
+                        let mut to_move: Vec<(ValueId, Instruction)> = Vec::new();
+                        for (_, _, (value_id, instr)) in invariant_instructions.iter().rev() {
+                            to_move.push((*value_id, instr.clone()));
+                        }
+                        
+                        // Insert before terminator
+                        let terminator = pre_header.terminator.take();
+                        for (value_id, instr) in to_move {
+                            pre_header.instructions.push((value_id, instr));
+                        }
+                        pre_header.terminator = terminator;
+                    }
+                    
+                    // Remove moved instructions from body blocks
+                    for (body_block_id, idx, _) in invariant_instructions.iter().rev() {
+                        if let Some(body_block) = func.blocks.iter_mut().find(|b| b.id == *body_block_id) {
+                            if *idx < body_block.instructions.len() {
+                                body_block.instructions.remove(*idx);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        new_ir
+    }
+    
+    /// Find all loops in a function (returns (header_block_id, body_block_ids))
+    fn find_loops(func: &IrFunction) -> Vec<(BlockId, Vec<BlockId>)> {
+        let mut loops = Vec::new();
+        let mut visited = HashSet::new();
+        
+        // Simple loop detection: a block is a loop header if it has a predecessor that is dominated by itself
+        // For now, use a simpler heuristic: find blocks that are their own predecessors through a back edge
+        for block in &func.blocks {
+            // Check if any successor is also a predecessor (back edge)
+            for &successor_id in &block.successors {
+                if let Some(successor) = func.blocks.iter().find(|b| b.id == successor_id) {
+                    if successor.predecessors.contains(&block.id) {
+                        // Found a back edge: block -> successor -> ... -> block
+                        // The successor is the loop header
+                        if !visited.contains(&successor_id) {
+                            visited.insert(successor_id);
+                            
+                            // Find all blocks in the loop (reachable from header without going through header's predecessors)
+                            let body_blocks = Self::find_loop_body(func, successor_id, block.id);
+                            loops.push((successor_id, body_blocks));
+                        }
+                    }
+                }
+            }
+        }
+        
+        loops
+    }
+    
+    /// Find all blocks in a loop body
+    fn find_loop_body(func: &IrFunction, header_id: BlockId, back_edge_from: BlockId) -> Vec<BlockId> {
+        let mut body_blocks = Vec::new();
+        let mut to_visit = vec![back_edge_from];
+        let mut visited = HashSet::new();
+        visited.insert(header_id);
+        
+        // Get header's predecessors (excluding the back edge)
+        if let Some(header) = func.blocks.iter().find(|b| b.id == header_id) {
+            for &pred_id in &header.predecessors {
+                if pred_id != back_edge_from {
+                    visited.insert(pred_id);
+                }
+            }
+        }
+        
+        while let Some(block_id) = to_visit.pop() {
+            if visited.contains(&block_id) {
+                continue;
+            }
+            visited.insert(block_id);
+            body_blocks.push(block_id);
+            
+            if let Some(block) = func.blocks.iter().find(|b| b.id == block_id) {
+                for &successor_id in &block.successors {
+                    if !visited.contains(&successor_id) && successor_id != header_id {
+                        to_visit.push(successor_id);
+                    }
+                }
+            }
+        }
+        
+        body_blocks
+    }
+    
+    /// Check if an instruction is loop-invariant (doesn't depend on loop-defined values)
+    fn is_loop_invariant(instr: &Instruction, loop_defined_values: &HashSet<ValueId>) -> bool {
+        // Instructions with side effects are never invariant
+        if Self::has_side_effects(instr) {
+            return false;
+        }
+        
+        // Check if all operands are loop-invariant
+        let operands = Self::get_instruction_operands(instr);
+        for operand in operands {
+            if loop_defined_values.contains(&operand) {
+                return false;
+            }
+        }
+        
+        true
+    }
+    
+    /// Find or create a pre-header block for a loop header
+    fn find_or_create_pre_header(func: &mut IrFunction, header_id: BlockId) -> BlockId {
+        // Find the header block
+        let header = func.blocks.iter().find(|b| b.id == header_id).unwrap();
+        
+        // If header has only one predecessor, use it as pre-header
+        if header.predecessors.len() == 1 {
+            return header.predecessors[0];
+        }
+        
+        // Otherwise, create a new pre-header block
+        let pre_header_id = BlockId(func.blocks.len() as u32 + 1000); // Temporary ID
+        let mut pre_header = BasicBlock::new(pre_header_id);
+        pre_header.terminator = Some(Instruction::Jump { target: header_id });
+        pre_header.successors.push(header_id);
+        
+        // Update all predecessors of header to jump to pre-header instead
+        let predecessors = header.predecessors.clone();
+        for pred_id in &predecessors {
+            if let Some(pred_block) = func.blocks.iter_mut().find(|b| b.id == *pred_id) {
+                // Update terminator to jump to pre-header
+                if let Some(Instruction::Jump { target }) = &mut pred_block.terminator {
+                    if *target == header_id {
+                        *target = pre_header_id;
+                    }
+                } else if let Some(Instruction::Branch { then_block, else_block, .. }) = &mut pred_block.terminator {
+                    if *then_block == header_id {
+                        *then_block = pre_header_id;
+                    }
+                    if *else_block == header_id {
+                        *else_block = pre_header_id;
+                    }
+                }
+                
+                // Update successors
+                if let Some(pos) = pred_block.successors.iter().position(|&id| id == header_id) {
+                    pred_block.successors[pos] = pre_header_id;
+                }
+            }
+        }
+        
+        // Update header's predecessors
+        if let Some(header_block) = func.blocks.iter_mut().find(|b| b.id == header_id) {
+            header_block.predecessors = vec![pre_header_id];
+        }
+        
+        pre_header.predecessors = predecessors;
+        func.blocks.push(pre_header);
+        
+        pre_header_id
+    }
+    
+    /// Function inlining: inline small functions marked with @inline attribute
+    fn function_inlining(ir: &IrProgram) -> IrProgram {
+        let mut new_ir = ir.clone();
+        
+        // Find functions marked for inlining and create a map of name -> function data (clone needed data)
+        let mut inline_candidates: HashMap<String, (FunctionId, BlockId, Vec<BasicBlock>, Vec<(String, ValueId, IrType)>)> = HashMap::new();
+        for func in &new_ir.functions {
+            if func.attributes.iter().any(|a| a == "@inline" || a == "inline") {
+                // Check if function is small enough to inline
+                let total_instructions: usize = func.blocks.iter()
+                    .map(|b| b.instructions.len())
+                    .sum();
+                
+                if total_instructions < 10 {
+                    // Clone the function's data for inlining
+                    inline_candidates.insert(
+                        func.name.clone(),
+                        (func.id, func.entry_block, func.blocks.clone(), func.params.clone())
+                    );
+                }
+            }
+        }
+        
+        if inline_candidates.is_empty() {
+            return new_ir;
+        }
+        
+        // Inline small functions
+        for func in &mut new_ir.functions {
+            let mut changed = true;
+            while changed {
+                changed = false;
+                
+                for block in &mut func.blocks {
+                    let mut new_instructions = Vec::new();
+                    let mut block_changed = false;
+                    
+                    for (value_id, instr) in &block.instructions {
+                        if let Instruction::Call { function_name: Some(callee_name), args, .. } = instr {
+                            // Check if this is a call to an inline candidate
+                            if let Some((_callee_id, entry_block_id, callee_blocks, callee_params)) = inline_candidates.get(callee_name) {
+                                // Inline the function
+                                if let Some(inlined_code) = Self::inline_function(
+                                    *entry_block_id,
+                                    callee_blocks,
+                                    callee_params,
+                                    args,
+                                    *value_id,
+                                ) {
+                                    new_instructions.extend(inlined_code);
+                                    block_changed = true;
+                                    changed = true;
+                                    continue;
+                                }
+                            }
+                        }
+                        
+                        new_instructions.push((*value_id, instr.clone()));
+                    }
+                    
+                    if block_changed {
+                        block.instructions = new_instructions;
+                    }
+                }
+            }
+        }
+        
+        new_ir
+    }
+    
+    /// Inline a function call, returning the inlined instructions
+    fn inline_function(
+        entry_block_id: BlockId,
+        callee_blocks: &[BasicBlock],
+        callee_params: &[(String, ValueId, IrType)],
+        args: &[ValueId],
+        result_value: ValueId,
+    ) -> Option<Vec<(ValueId, Instruction)>> {
+        if callee_params.len() != args.len() {
+            return None;
+        }
+        
+        // Create parameter mapping
+        let mut param_map: HashMap<ValueId, ValueId> = HashMap::new();
+        for (i, (_, param_value, _)) in callee_params.iter().enumerate() {
+            param_map.insert(*param_value, args[i]);
+        }
+        
+        // Clone and remap instructions from callee's entry block
+        let entry_block = callee_blocks.iter().find(|b| b.id == entry_block_id)?;
+        let mut inlined_instructions = Vec::new();
+        
+        for (value_id, instr) in &entry_block.instructions {
+            let new_value_id = if *value_id == result_value {
+                result_value
+            } else {
+                // Use a new value ID for intermediate values
+                ValueId(value_id.0 + 100000) // Offset to avoid conflicts
+            };
+            
+            let new_instr = Self::remap_instruction(instr, &param_map);
+            inlined_instructions.push((new_value_id, new_instr));
+        }
+        
+        // Handle return value
+        if let Some(Instruction::Return { value: Some(return_value) }) = &entry_block.terminator {
+            // Check if return value is a parameter
+            if param_map.contains_key(return_value) {
+                // If return value is a parameter, just use the argument directly
+                // This will be handled by the caller using the mapped value
+            } else {
+                // Find the instruction that produces the return value
+                if let Some((_, return_instr)) = entry_block.instructions.iter()
+                    .find(|(vid, _)| *vid == *return_value) {
+                    let new_instr = Self::remap_instruction(return_instr, &param_map);
+                    inlined_instructions.push((result_value, new_instr));
+                }
+            }
+        }
+        
+        Some(inlined_instructions)
+    }
+    
+    /// Remap value IDs in an instruction according to parameter mapping
+    fn remap_instruction(instr: &Instruction, param_map: &HashMap<ValueId, ValueId>) -> Instruction {
+        match instr {
+            Instruction::Add { lhs, rhs } => {
+                Instruction::Add {
+                    lhs: *param_map.get(lhs).unwrap_or(lhs),
+                    rhs: *param_map.get(rhs).unwrap_or(rhs),
+                }
+            }
+            Instruction::Sub { lhs, rhs } => {
+                Instruction::Sub {
+                    lhs: *param_map.get(lhs).unwrap_or(lhs),
+                    rhs: *param_map.get(rhs).unwrap_or(rhs),
+                }
+            }
+            Instruction::Mul { lhs, rhs } => {
+                Instruction::Mul {
+                    lhs: *param_map.get(lhs).unwrap_or(lhs),
+                    rhs: *param_map.get(rhs).unwrap_or(rhs),
+                }
+            }
+            Instruction::Div { lhs, rhs } => {
+                Instruction::Div {
+                    lhs: *param_map.get(lhs).unwrap_or(lhs),
+                    rhs: *param_map.get(rhs).unwrap_or(rhs),
+                }
+            }
+            Instruction::Call { callee, args, effect, function_name, is_tail_call } => {
+                Instruction::Call {
+                    callee: *param_map.get(callee).unwrap_or(callee),
+                    args: args.iter().map(|a| *param_map.get(a).unwrap_or(a)).collect(),
+                    effect: *effect,
+                    function_name: function_name.clone(),
+                    is_tail_call: *is_tail_call,
+                }
+            }
+            _ => instr.clone(), // For other instructions, just clone (they don't use parameters)
         }
     }
 }

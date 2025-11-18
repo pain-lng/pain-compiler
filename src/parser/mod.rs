@@ -23,13 +23,13 @@ pub fn parse(source: &str) -> Result<Program, String> {
 
 struct Parser<'a> {
     tokens: &'a [TokenWithSpan],
-    source: &'a str,
+    _source: &'a str, // Reserved for future use (error messages with source snippets)
     pos: usize,
 }
 
 impl<'a> Parser<'a> {
     fn new(tokens: &'a [TokenWithSpan], source: &'a str) -> Self {
-        Self { tokens, source, pos: 0 }
+        Self { tokens, _source: source, pos: 0 }
     }
     
     fn peek(&self) -> Option<&TokenWithSpan> {
@@ -888,6 +888,86 @@ mod tests {
     #[test]
     fn test_parse_expression() {
         let source = "fn add(a: int, b: int) -> int: return a + b";
+        let result = parse(source);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_parse_complex_expression() {
+        let source = "fn test(a: int, b: int, c: int) -> int: return (a + b) * c";
+        let result = parse(source);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_parse_nested_blocks() {
+        let source = "fn test():
+    if True:
+        if False:
+            return 1
+        else:
+            return 2
+    return 3";
+        let result = parse(source);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_parse_for_loop() {
+        let source = "fn test():
+    for item in [1, 2, 3]:
+        return item";
+        let result = parse(source);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_parse_class() {
+        let source = "class Point:
+    let x: int
+    let y: int";
+        let result = parse(source);
+        assert!(result.is_ok());
+        let program = result.unwrap();
+        assert!(program.items.iter().any(|item| matches!(item, Item::Class(_))));
+    }
+
+    #[test]
+    fn test_parse_error_recovery() {
+        let source = "fn test(
+    return 42";
+        let result = parse(source);
+        assert!(result.is_err(), "Expected parse error for incomplete function");
+    }
+
+    #[test]
+    fn test_parse_multiple_functions() {
+        let source = "fn func1(): return 1
+
+fn func2(): return 2";
+        let result = parse(source);
+        assert!(result.is_ok());
+        let program = result.unwrap();
+        assert_eq!(program.items.len(), 2);
+    }
+
+    #[test]
+    fn test_parse_operator_precedence() {
+        let source = "fn test(a: int, b: int, c: int) -> int: return a + b * c";
+        let result = parse(source);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_parse_list_literal() {
+        let source = "fn test() -> list[int]: return [1, 2, 3]";
+        let result = parse(source);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_parse_empty_list() {
+        let source = "fn test() -> list[int]: return []";
         let result = parse(source);
         assert!(result.is_ok());
     }

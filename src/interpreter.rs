@@ -967,3 +967,121 @@ impl Interpreter {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::parse;
+
+    #[test]
+    fn test_interpret_simple_function() {
+        let source = "fn main():
+    return 42";
+        let program = parse(source).unwrap();
+        let mut interpreter = Interpreter::new().unwrap();
+        let result = interpreter.interpret(&program).unwrap();
+        if let Value::Int(n) = result {
+            assert_eq!(n, 42);
+        } else {
+            panic!("Expected Int value");
+        }
+    }
+
+    #[test]
+    fn test_interpret_arithmetic() {
+        let source = "fn main():
+    return 2 + 3";
+        let program = parse(source).unwrap();
+        let mut interpreter = Interpreter::new().unwrap();
+        let result = interpreter.interpret(&program).unwrap();
+        if let Value::Int(n) = result {
+            assert_eq!(n, 5);
+        } else {
+            panic!("Expected Int value");
+        }
+    }
+
+    #[test]
+    fn test_interpret_variables() {
+        let source = "fn main():
+    let x = 10
+    let y = 20
+    return x + y";
+        let program = parse(source).unwrap();
+        let mut interpreter = Interpreter::new().unwrap();
+        let result = interpreter.interpret(&program).unwrap();
+        if let Value::Int(n) = result {
+            assert_eq!(n, 30);
+        } else {
+            panic!("Expected Int value");
+        }
+    }
+
+    #[test]
+    fn test_interpret_if_statement() {
+        let source = "fn main():
+    if True:
+        return 1
+    else:
+        return 0";
+        let program = parse(source).unwrap();
+        let mut interpreter = Interpreter::new().unwrap();
+        let result = interpreter.interpret(&program).unwrap();
+        if let Value::Int(n) = result {
+            assert_eq!(n, 1);
+        } else {
+            panic!("Expected Int value");
+        }
+    }
+
+    #[test]
+    fn test_interpret_while_loop() {
+        let source = "fn main():
+    let sum = 0
+    let i = 0
+    while i < 5:
+        sum = sum + i
+        i = i + 1
+    return sum";
+        let program = parse(source).unwrap();
+        let mut interpreter = Interpreter::new().unwrap();
+        let result = interpreter.interpret(&program).unwrap();
+        if let Value::Int(n) = result {
+            assert_eq!(n, 10); // 0+1+2+3+4 = 10
+        } else {
+            panic!("Expected Int value");
+        }
+    }
+
+    #[test]
+    fn test_interpret_function_call() {
+        let source = "fn add(a: int, b: int) -> int:
+    return a + b
+
+fn main():
+    return add(5, 3)";
+        let program = parse(source).unwrap();
+        let mut interpreter = Interpreter::new().unwrap();
+        let result = interpreter.interpret(&program).unwrap();
+        if let Value::Int(n) = result {
+            assert_eq!(n, 8);
+        } else {
+            panic!("Expected Int value");
+        }
+    }
+
+    #[test]
+    fn test_interpret_list() {
+        let source = "fn main():
+    let items = [1, 2, 3]
+    return len(items)";
+        let program = parse(source).unwrap();
+        let mut interpreter = Interpreter::new().unwrap();
+        let result = interpreter.interpret(&program).unwrap();
+        if let Value::Int(n) = result {
+            assert_eq!(n, 3);
+        } else {
+            panic!("Expected Int value");
+        }
+    }
+}
