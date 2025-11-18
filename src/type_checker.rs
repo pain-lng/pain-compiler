@@ -5,6 +5,15 @@ use crate::span::{Span, Position};
 use crate::stdlib::{is_stdlib_function, get_stdlib_return_type};
 use std::collections::HashMap;
 
+/// Helper function to get span from an expression
+/// Since Expr doesn't have span yet, we return a default span
+/// TODO: Add span to Expr enum
+fn get_expr_span(_expr: &Expr) -> Span {
+    // For now, return a default span
+    // TODO: Add span field to Expr enum and return actual span
+    Span::single(Position::start())
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum TypeError {
     UndefinedVariable { name: String, span: Span },
@@ -145,7 +154,8 @@ fn type_check_statement(ctx: &mut TypeContext, stmt: &Statement) -> TypeResult<T
             let var_type = if let Some(annotated_type) = ty {
                 // Check that inferred type matches annotated type
                 if !types_compatible(&init_type, annotated_type) {
-                    let span = Span::single(Position::start()); // TODO: Get actual span
+                    // Use init expression span for error location
+                    let span = get_expr_span(init);
                     return Err(TypeError::TypeMismatch {
                         expected: annotated_type.clone(),
                         found: init_type,
@@ -171,7 +181,7 @@ fn type_check_statement(ctx: &mut TypeContext, stmt: &Statement) -> TypeResult<T
         Statement::If { cond, then, else_, .. } => {
             let cond_type = infer_expr_type(ctx, cond)?;
             if !types_compatible(&cond_type, &Type::Bool) {
-                let span = Span::single(Position::start()); // TODO: Get actual span
+                let span = get_expr_span(cond);
                 return Err(TypeError::TypeMismatch {
                     expected: Type::Bool,
                     found: cond_type,
@@ -214,7 +224,7 @@ fn type_check_statement(ctx: &mut TypeContext, stmt: &Statement) -> TypeResult<T
         Statement::While { cond, body, .. } => {
             let cond_type = infer_expr_type(ctx, cond)?;
             if !types_compatible(&cond_type, &Type::Bool) {
-                let span = Span::single(Position::start()); // TODO: Get actual span
+                let span = get_expr_span(cond);
                 return Err(TypeError::TypeMismatch {
                     expected: Type::Bool,
                     found: cond_type,
@@ -240,6 +250,16 @@ fn infer_expr_type(ctx: &TypeContext, expr: &Expr) -> TypeResult<Type> {
         Expr::FString(_) => Ok(Type::Str),
         Expr::Bool(_) => Ok(Type::Bool),
         Expr::None => Ok(Type::Dynamic),
+        Expr::List(elements) => {
+            // Infer element type from first element, or Dynamic if empty
+            if elements.is_empty() {
+                Ok(Type::List(Box::new(Type::Dynamic)))
+            } else {
+                let first_type = infer_expr_type(ctx, &elements[0])?;
+                // Check all elements have same type (simplified - just use first)
+                Ok(Type::List(Box::new(first_type)))
+            }
+        }
         Expr::Ident(name) => {
             // Check if it's a stdlib function
             if is_stdlib_function(name) {
@@ -249,8 +269,7 @@ fn infer_expr_type(ctx: &TypeContext, expr: &Expr) -> TypeResult<Type> {
             ctx.get_variable(name)
                 .cloned()
                 .ok_or_else(|| {
-                    // TODO: Get actual span from AST
-                    let span = Span::single(Position::start());
+                    let span = get_expr_span(expr);
                     TypeError::UndefinedVariable { name: name.clone(), span }
                 })
         }
@@ -270,7 +289,7 @@ fn infer_expr_type(ctx: &TypeContext, expr: &Expr) -> TypeResult<Type> {
             if types_compatible(&left_type, &Type::Bool) && types_compatible(&right_type, &Type::Bool) {
                 Ok(Type::Bool)
             } else {
-                let span = Span::single(Position::start()); // TODO: Get actual span
+                let span = get_expr_span(expr);
                 Err(TypeError::TypeMismatch {
                     expected: Type::Bool,
                     found: left_type,
@@ -283,7 +302,7 @@ fn infer_expr_type(ctx: &TypeContext, expr: &Expr) -> TypeResult<Type> {
             if types_compatible(&op_type, &Type::Bool) {
                 Ok(Type::Bool)
             } else {
-                let span = Span::single(Position::start()); // TODO: Get actual span
+                let span = get_expr_span(expr);
                 Err(TypeError::TypeMismatch {
                     expected: Type::Bool,
                     found: op_type,
@@ -296,7 +315,7 @@ fn infer_expr_type(ctx: &TypeContext, expr: &Expr) -> TypeResult<Type> {
             match op_type {
                 Type::Int | Type::Float32 | Type::Float64 => Ok(op_type),
                 _ => {
-                    let span = Span::single(Position::start()); // TODO: Get actual span
+                    let span = get_expr_span(expr);
                     Err(TypeError::InvalidOperation {
                         op: "negation".to_string(),
                         left: op_type,
@@ -331,7 +350,7 @@ fn infer_expr_type(ctx: &TypeContext, expr: &Expr) -> TypeResult<Type> {
                 Type::List(inner) | Type::Array(inner) => Ok(*inner),
                 Type::Map(_, value) => Ok(*value),
                 _ => {
-                    let span = Span::single(Position::start()); // TODO: Get actual span
+                    let span = get_expr_span(expr);
                     Err(TypeError::InvalidOperation {
                         op: "indexing".to_string(),
                         left: container_type,
@@ -376,7 +395,7 @@ fn infer_expr_type(ctx: &TypeContext, expr: &Expr) -> TypeResult<Type> {
                     .collect();
                 Ok(Type::Named(class_name.clone()))
             } else {
-                let span = Span::single(Position::start()); // TODO: Get actual span
+                let span = get_expr_span(expr);
                 Err(TypeError::UndefinedVariable {
                     name: format!("Class '{}' not found", class_name),
                     span,
@@ -401,7 +420,8 @@ fn infer_binary_op_type(left: &Type, right: &Type) -> TypeResult<Type> {
         (Type::Float32, Type::Float64) | (Type::Float64, Type::Float32) => Ok(Type::Float64),
         (Type::Dynamic, _) | (_, Type::Dynamic) => Ok(Type::Dynamic),
         _ => {
-            let span = Span::single(Position::start()); // TODO: Get actual span
+            // Use a default span - we don't have access to the expression here
+            let span = Span::single(Position::start());
             Err(TypeError::InvalidOperation {
                 op: "arithmetic".to_string(),
                 left: left.clone(),

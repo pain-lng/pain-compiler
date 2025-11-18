@@ -390,6 +390,7 @@ impl IrBuilder {
                             args: method_args,
                             effect: MemoryEffect::None,
                             function_name: Some(mangled_method_name),
+                            is_tail_call: false,
                         }
                     } else {
                         // Method not found - generate placeholder
@@ -398,6 +399,7 @@ impl IrBuilder {
                             args: arg_vals,
                             effect: MemoryEffect::None,
                             function_name: None,
+                            is_tail_call: false,
                         }
                     }
                 } else if let Expr::Ident(callee_name) = callee.as_ref() {
@@ -424,6 +426,7 @@ impl IrBuilder {
                             args: arg_vals,
                             effect: MemoryEffect::None, // User functions might have side effects, but default to None
                             function_name: Some(callee_name.clone()), // Store name for codegen
+                            is_tail_call: false,
                         }
                     } else {
                         // Fallback: treat as expression that evaluates to a function
@@ -433,6 +436,7 @@ impl IrBuilder {
                             args: arg_vals,
                             effect: MemoryEffect::None,
                             function_name: None, // Dynamic call
+                            is_tail_call: false,
                         }
                     }
                 } else {
@@ -443,6 +447,7 @@ impl IrBuilder {
                         args: arg_vals,
                         effect: MemoryEffect::None,
                         function_name: None, // Dynamic call
+                        is_tail_call: false,
                     }
                 };
                 

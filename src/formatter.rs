@@ -209,6 +209,16 @@ impl Formatter {
             Expr::None => {
                 self.write("None");
             }
+            Expr::List(elements) => {
+                self.write("[");
+                for (i, elem) in elements.iter().enumerate() {
+                    if i > 0 {
+                        self.write(", ");
+                    }
+                    self.format_expr(elem);
+                }
+                self.write("]");
+            }
             Expr::Ident(name) => {
                 self.write(name);
             }

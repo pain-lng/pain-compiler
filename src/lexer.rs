@@ -1,6 +1,7 @@
 // Lexer module - tokenizer using logos
 
 use logos::Logos;
+use crate::span::{Span, PositionTracker};
 
 #[derive(Logos, Debug, PartialEq, Clone)]
 #[logos(skip r"[ \t\r\n\f]+")] // Skip whitespace
@@ -186,17 +187,29 @@ pub enum Token {
     Newline, // Used internally for indentation tracking
 }
 
+/// Token with source location information
+#[derive(Debug, Clone)]
+pub struct TokenWithSpan {
+    pub token: Token,
+    pub span: Span,
+}
+
 /// Process source code and insert Indent/Dedent tokens based on indentation
-/// Returns a vector of tokens with Indent/Dedent inserted appropriately
-pub fn tokenize_with_indentation(source: &str) -> Vec<Result<Token, ()>> {
-    // Tokenize by lines to handle indentation properly
+/// Returns a vector of tokens with Indent/Dedent inserted appropriately, with span information
+pub fn tokenize_with_indentation(source: &str) -> Vec<Result<TokenWithSpan, ()>> {
+    let tracker = PositionTracker::new(source);
     let lines: Vec<&str> = source.lines().collect();
     let mut tokens = Vec::new();
     let mut indent_stack = vec![0];
+    let mut byte_offset = 0;
     
     for (_line_num, line) in lines.iter().enumerate() {
+        let line_start_offset = byte_offset;
+        let line_indent_start = byte_offset;
+        
         // Skip empty lines
         if line.trim().is_empty() {
+            byte_offset += line.len() + 1; // +1 for newline
             continue;
         }
         
@@ -213,13 +226,21 @@ pub fn tokenize_with_indentation(source: &str) -> Vec<Result<Token, ()>> {
         if indent > current_level {
             // Indent: increase indentation
             indent_stack.push(indent);
-            tokens.push(Ok(Token::Indent));
+            let indent_pos = tracker.position_at(line_indent_start);
+            tokens.push(Ok(TokenWithSpan {
+                token: Token::Indent,
+                span: Span::single(indent_pos),
+            }));
         } else if indent < current_level {
             // Dedent: decrease indentation
             while let Some(&level) = indent_stack.last() {
                 if level > indent {
                     indent_stack.pop();
-                    tokens.push(Ok(Token::Dedent));
+                    let dedent_pos = tracker.position_at(line_indent_start);
+                    tokens.push(Ok(TokenWithSpan {
+                        token: Token::Dedent,
+                        span: Span::single(dedent_pos),
+                    }));
                 } else {
                     break;
                 }
@@ -233,23 +254,43 @@ pub fn tokenize_with_indentation(source: &str) -> Vec<Result<Token, ()>> {
             }
         }
         
-        // Tokenize the line content (preserve original line for multiline strings)
-        // For now, tokenize trimmed line - this works for most cases
+        // Tokenize the line content
         let trimmed = line.trim_start();
+        let trim_offset = line.len() - trimmed.len();
         if trimmed.is_empty() || trimmed.starts_with('#') {
+            byte_offset += line.len() + 1;
             continue;
         }
         
         let mut line_lexer = Token::lexer(trimmed);
         while let Some(token_result) = line_lexer.next() {
-            tokens.push(token_result);
+            match token_result {
+                Ok(token) => {
+                    let token_span = line_lexer.span();
+                    let start_offset = line_start_offset + trim_offset + token_span.start;
+                    let end_offset = line_start_offset + trim_offset + token_span.end;
+                    let start_pos = tracker.position_at(start_offset);
+                    let end_pos = tracker.position_at(end_offset);
+                    tokens.push(Ok(TokenWithSpan {
+                        token,
+                        span: Span::new(start_pos, end_pos),
+                    }));
+                }
+                Err(e) => tokens.push(Err(e)),
+            }
         }
+        
+        byte_offset += line.len() + 1; // +1 for newline
     }
     
     // Emit final dedents at EOF
     while indent_stack.len() > 1 {
         indent_stack.pop();
-        tokens.push(Ok(Token::Dedent));
+        let eof_pos = tracker.position_at(byte_offset);
+        tokens.push(Ok(TokenWithSpan {
+            token: Token::Dedent,
+            span: Span::single(eof_pos),
+        }));
     }
     
     tokens
@@ -257,7 +298,7 @@ pub fn tokenize_with_indentation(source: &str) -> Vec<Result<Token, ()>> {
 
 /// Lexer wrapper that handles indentation
 pub struct IndentLexer {
-    tokens: Vec<Result<Token, ()>>,
+    tokens: Vec<Result<TokenWithSpan, ()>>,
     pos: usize,
 }
 
@@ -272,7 +313,7 @@ impl IndentLexer {
 }
 
 impl Iterator for IndentLexer {
-    type Item = Result<Token, ()>;
+    type Item = Result<TokenWithSpan, ()>;
     
     fn next(&mut self) -> Option<Self::Item> {
         if self.pos < self.tokens.len() {

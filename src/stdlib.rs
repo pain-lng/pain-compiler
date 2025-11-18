@@ -102,6 +102,21 @@ pub fn get_stdlib_functions() -> Vec<StdlibFunction> {
         return_type: Type::Int,
         description: "Returns the length of a string".to_string(),
     });
+    
+    // List/Array functions
+    functions.push(StdlibFunction {
+        name: "len".to_string(),
+        params: vec![("list".to_string(), Type::List(Box::new(Type::Dynamic)))],
+        return_type: Type::Int,
+        description: "Returns the length of a list".to_string(),
+    });
+    
+    functions.push(StdlibFunction {
+        name: "len".to_string(),
+        params: vec![("arr".to_string(), Type::Array(Box::new(Type::Dynamic)))],
+        return_type: Type::Int,
+        description: "Returns the length of an array".to_string(),
+    });
 
     functions.push(StdlibFunction {
         name: "concat".to_string(),
@@ -199,7 +214,7 @@ pub fn is_stdlib_function(name: &str) -> bool {
         name,
         "abs" | "min" | "max" | "sqrt" | "pow" | "sin" | "cos" | "floor" | "ceil"
             | "len" | "concat" | "substring" | "contains" | "starts_with" | "ends_with"
-            | "trim" | "to_int" | "to_float" | "to_string" | "print"
+            | "trim" | "to_int" | "to_float" | "to_string" | "print" | "push" | "pop"
     )
 }
 
@@ -242,10 +257,13 @@ pub fn get_stdlib_return_type(name: &str, arg_types: &[Type]) -> Option<Type> {
                 None
             }
         }
-        // String functions
+        // String/List/Array functions
         "len" => {
-            if arg_types.len() == 1 && arg_types[0] == Type::Str {
-                Some(Type::Int)
+            if arg_types.len() == 1 {
+                match &arg_types[0] {
+                    Type::Str | Type::List(_) | Type::Array(_) => Some(Type::Int),
+                    _ => None,
+                }
             } else {
                 None
             }

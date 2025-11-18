@@ -402,7 +402,7 @@ impl CodeGenerator {
                     incoming_strs.join(", ")
                 ));
             }
-            Instruction::Call { callee: _, args, function_name, .. } => {
+            Instruction::Call { callee: _, args, function_name, is_tail_call, .. } => {
                 // Generate function call
                 if let Some(func_name) = function_name {
                     // Static call to user-defined function
@@ -421,9 +421,13 @@ impl CodeGenerator {
                             .map(|(_, _, ty)| self.llvm_type(ty))
                             .collect();
                         
+                        // Add tail call attribute if this is a tail call
+                        let tail_attr = if *is_tail_call { "tail " } else { "" };
+                        
                         if ret_type == "void" {
                             self.llvm_code.push_str(&format!(
-                                "  call void @{}({})\n",
+                                "  {}call void @{}({})\n",
+                                tail_attr,
                                 func_name,
                                 arg_values.iter().zip(param_types.iter())
                                     .map(|(val, ty)| format!("{} {}", ty, val))
@@ -433,8 +437,9 @@ impl CodeGenerator {
                             return "void".to_string();
                         } else {
                             self.llvm_code.push_str(&format!(
-                                "  {} = call {} @{}({})\n",
+                                "  {} = {}call {} @{}({})\n",
                                 result,
+                                tail_attr,
                                 ret_type,
                                 func_name,
                                 arg_values.iter().zip(param_types.iter())

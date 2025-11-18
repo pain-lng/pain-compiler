@@ -109,6 +109,7 @@ pub enum Instruction {
         args: Vec<ValueId>,
         effect: MemoryEffect,
         function_name: Option<String>, // Optional function name for static calls
+        is_tail_call: bool, // True if this is a tail call (result is immediately returned)
     },
     
     // Control flow

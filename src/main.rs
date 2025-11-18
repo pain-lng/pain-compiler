@@ -235,6 +235,34 @@ fn run(input: &PathBuf) -> anyhow::Result<()> {
         pain_runtime::Value::String(s) => println!("{}", s),
         pain_runtime::Value::None => {},
         pain_runtime::Value::Object(_) => println!("[Object]"),
+        pain_runtime::Value::List(list) => {
+            print!("[");
+            for (i, item) in list.iter().enumerate() {
+                if i > 0 { print!(", "); }
+                match item {
+                    pain_runtime::Value::Int(n) => print!("{}", n),
+                    pain_runtime::Value::Float(f) => print!("{}", f),
+                    pain_runtime::Value::Bool(b) => print!("{}", b),
+                    pain_runtime::Value::String(s) => print!("\"{}\"", s),
+                    _ => print!("{:?}", item),
+                }
+            }
+            println!("]");
+        }
+        pain_runtime::Value::Array(arr) => {
+            print!("[");
+            for (i, item) in arr.iter().enumerate() {
+                if i > 0 { print!(", "); }
+                match item {
+                    pain_runtime::Value::Int(n) => print!("{}", n),
+                    pain_runtime::Value::Float(f) => print!("{}", f),
+                    pain_runtime::Value::Bool(b) => print!("{}", b),
+                    pain_runtime::Value::String(s) => print!("\"{}\"", s),
+                    _ => print!("{:?}", item),
+                }
+            }
+            println!("]");
+        }
     }
     
     Ok(())

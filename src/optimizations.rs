@@ -14,6 +14,7 @@ impl Optimizer {
         // Run optimization passes in order
         ir = Self::constant_folding(&ir);
         ir = Self::common_subexpression_elimination(&ir);
+        ir = Self::tail_call_optimization(&ir);
         ir = Self::dead_code_elimination(&ir);
         
         ir
@@ -467,6 +468,15 @@ impl Optimizer {
                     operand: Self::resolve_value(*operand, value_replacements),
                 }
             }
+            Instruction::Call { callee, args, effect, function_name, is_tail_call } => {
+                Instruction::Call {
+                    callee: Self::resolve_value(*callee, value_replacements),
+                    args: args.iter().map(|a| Self::resolve_value(*a, value_replacements)).collect(),
+                    effect: *effect,
+                    function_name: function_name.clone(),
+                    is_tail_call: *is_tail_call,
+                }
+            }
             _ => instr.clone(),
         }
     }
@@ -488,6 +498,38 @@ impl Optimizer {
             }
             _ => terminator.clone(),
         }
+    }
+    
+    /// Tail-call optimization: mark calls that are immediately returned as tail calls
+    fn tail_call_optimization(ir: &IrProgram) -> IrProgram {
+        let mut new_ir = ir.clone();
+        
+        for func in &mut new_ir.functions {
+            for block in &mut func.blocks {
+                // Check if block ends with a return that uses the result of the last instruction
+                if let Some(Instruction::Return { value: Some(return_value) }) = &block.terminator {
+                    // Check if the last instruction is a Call that produces the return value
+                    if let Some((last_value_id, last_instr)) = block.instructions.last() {
+                        if *last_value_id == *return_value {
+                            if let Instruction::Call { callee, args, effect, function_name, .. } = last_instr {
+                                // This is a tail call - mark it
+                                let last_idx = block.instructions.len() - 1;
+                                let new_call = Instruction::Call {
+                                    callee: *callee,
+                                    args: args.clone(),
+                                    effect: *effect,
+                                    function_name: function_name.clone(),
+                                    is_tail_call: true,
+                                };
+                                block.instructions[last_idx] = (*last_value_id, new_call);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        new_ir
     }
     
     /// Dead Code Elimination: remove unused instructions
@@ -607,7 +649,7 @@ impl Optimizer {
             Instruction::Alloc { size, .. } => vec![*size],
             Instruction::Free { ptr, .. } => vec![*ptr],
             
-            Instruction::Call { callee, args, effect: _, function_name: _ } => {
+            Instruction::Call { callee, args, effect: _, function_name: _, is_tail_call: _ } => {
                 let mut operands = vec![*callee];
                 operands.extend(args);
                 operands

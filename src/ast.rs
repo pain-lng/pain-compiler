@@ -108,6 +108,7 @@ pub enum Expr {
     FString(String),
     Bool(bool),
     None,
+    List(Vec<Expr>), // List literal: [1, 2, 3]
     
     // Variables
     Ident(String),
