@@ -14,19 +14,16 @@ enum ControlFlow {
 }
 
 /// Execution context for interpreter
-struct Environment {
+#[derive(Default)]
+pub struct Environment {
     variables: HashMap<String, Value>,
     functions: HashMap<String, Function>,
     classes: HashMap<String, Class>,
 }
 
 impl Environment {
-    fn new() -> Self {
-        Self {
-            variables: HashMap::new(),
-            functions: HashMap::new(),
-            classes: HashMap::new(),
-        }
+    pub fn new() -> Self {
+        Self::default()
     }
 
     fn set_var(&mut self, name: String, value: Value) {
@@ -46,7 +43,7 @@ impl Environment {
         }
     }
 
-    fn add_function(&mut self, func: Function) {
+    pub fn add_function(&mut self, func: Function) {
         self.functions.insert(func.name.clone(), func);
     }
 
@@ -54,12 +51,24 @@ impl Environment {
         self.functions.get(name)
     }
 
-    fn add_class(&mut self, class: Class) {
+    pub fn get_all_functions(&self) -> &HashMap<String, Function> {
+        &self.functions
+    }
+
+    pub fn add_class(&mut self, class: Class) {
         self.classes.insert(class.name.clone(), class);
     }
 
     fn get_class(&self, name: &str) -> Option<&Class> {
         self.classes.get(name)
+    }
+
+    pub fn get_all_classes(&self) -> &HashMap<String, Class> {
+        &self.classes
+    }
+
+    pub fn get_all_variables(&self) -> &HashMap<String, Value> {
+        &self.variables
     }
 }
 
@@ -98,7 +107,7 @@ impl Interpreter {
     }
 
     /// Evaluate a function call
-    fn eval_function(
+    pub fn eval_function(
         &mut self,
         func: &Function,
         args: &[Value],
@@ -982,6 +991,41 @@ impl Interpreter {
             }
             _ => Err("Unknown stdlib function"),
         }
+    }
+
+    /// Evaluate a statement in REPL mode (returns result value for expressions)
+    pub fn eval_repl_stmt(
+        &mut self,
+        stmt: &Statement,
+        env: &mut Environment,
+    ) -> Result<Option<Value>, &'static str> {
+        match stmt {
+            Statement::Expr(expr) => {
+                let value = self.eval_expr(expr, env)?;
+                Ok(Some(value))
+            }
+            Statement::Let {
+                name,
+                init,
+                mutable: _,
+                ty: _,
+            } => {
+                let value = self.eval_expr(init, env)?;
+                env.set_var(name.clone(), value.clone());
+                Ok(Some(value))
+            }
+            _ => match self.eval_stmt(stmt, env)? {
+                ControlFlow::Return(val) => Ok(Some(val)),
+                ControlFlow::Next => Ok(None),
+                ControlFlow::Break => Err("Break outside loop"),
+                ControlFlow::Continue => Err("Continue outside loop"),
+            },
+        }
+    }
+
+    /// Create a new environment for REPL (with stdlib functions)
+    pub fn create_repl_env() -> Environment {
+        Environment::new()
     }
 }
 

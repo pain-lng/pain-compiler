@@ -21,6 +21,7 @@ logos.workspace = true
 anyhow.workspace = true
 clap.workspace = true
 thiserror.workspace = true
+rustyline.workspace = true
 
 # Runtime (for interpreter)
 pain-runtime = { path = "../pain-runtime" }
