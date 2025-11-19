@@ -493,8 +493,10 @@ mod tests {
 
     #[test]
     fn test_infer_float_literal() {
+        use std::f64::consts::PI;
+
         let ctx = TypeContext::new();
-        let expr = Expr::Float(3.14);
+        let expr = Expr::Float(PI);
         assert_eq!(infer_expr_type(&ctx, &expr).unwrap(), Type::Float64);
     }
 
