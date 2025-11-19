@@ -72,7 +72,7 @@ impl CodeGenerator {
             self.llvm_code.push_str("}\n");
         }
         if !self.ir.structs.is_empty() {
-            self.llvm_code.push_str("\n");
+            self.llvm_code.push('\n');
         }
     }
 
@@ -104,7 +104,7 @@ impl CodeGenerator {
             }
         }
         // Always add newline after string constants section
-        self.llvm_code.push_str("\n");
+        self.llvm_code.push('\n');
     }
 
     fn declare_stdlib_functions(&mut self) {
@@ -147,7 +147,7 @@ impl CodeGenerator {
         }
         
         if !declared.is_empty() {
-            self.llvm_code.push_str("\n");
+            self.llvm_code.push('\n');
         }
     }
 

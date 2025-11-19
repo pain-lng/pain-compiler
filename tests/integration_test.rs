@@ -690,7 +690,7 @@ fn test_ir_build_with_parameters() {
 }
 
 #[test]
-fn test_optimization_tail_call() {
+fn test_optimization_tail_call_with_entrypoint() {
     let source = "fn helper(n: int, acc: int) -> int:
     if n == 0:
         return acc
@@ -1031,7 +1031,7 @@ fn test_parse_ternary_like_pattern() {
 }
 
 #[test]
-fn test_full_pipeline_with_loops() {
+fn test_full_pipeline_with_loops_range() {
     let source = "fn sum_range(start: int, end: int) -> int:
     let total = 0
     let i = start
@@ -1442,7 +1442,7 @@ fn main() -> int:
 }
 
 #[test]
-fn test_full_pipeline_with_loops() {
+fn test_full_pipeline_with_loops_main() {
     let source = "fn sum(n: int) -> int:
     let total = 0
     let i = 0
@@ -1544,7 +1544,7 @@ fn main() -> int:
 }
 
 #[test]
-fn test_optimization_tail_call() {
+fn test_optimization_tail_call_helper_only() {
     let source = "fn helper(n: int, acc: int) -> int:
     if n == 0:
         return acc

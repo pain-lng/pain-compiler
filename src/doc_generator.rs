@@ -49,7 +49,7 @@ impl DocGenerator {
             for attr in &func.attrs {
                 output.push_str(&format!("- `@{}`\n", attr.name));
             }
-            output.push_str("\n");
+            output.push('\n');
         }
         
         // Signature
@@ -64,7 +64,7 @@ impl DocGenerator {
             for param in &func.params {
                 output.push_str(&format!("- `{}`: {}\n", param.name, Self::format_type(&param.ty)));
             }
-            output.push_str("\n");
+            output.push('\n');
         }
         
         // Return type
@@ -154,9 +154,9 @@ impl DocGenerator {
             output.push_str("## Math Functions\n\n");
             for func in &math_functions {
                 output.push_str(&Self::format_stdlib_function(func));
-                output.push_str("\n");
+                output.push('\n');
             }
-            output.push_str("\n");
+            output.push('\n');
         }
         
         // String functions
@@ -164,9 +164,9 @@ impl DocGenerator {
             output.push_str("## String Functions\n\n");
             for func in &string_functions {
                 output.push_str(&Self::format_stdlib_function(func));
-                output.push_str("\n");
+                output.push('\n');
             }
-            output.push_str("\n");
+            output.push('\n');
         }
         
         // I/O functions
@@ -174,9 +174,9 @@ impl DocGenerator {
             output.push_str("## I/O Functions\n\n");
             for func in &io_functions {
                 output.push_str(&Self::format_stdlib_function(func));
-                output.push_str("\n");
+                output.push('\n');
             }
-            output.push_str("\n");
+            output.push('\n');
         }
         
         output
@@ -205,7 +205,7 @@ impl DocGenerator {
             for (name, ty) in &func.params {
                 output.push_str(&format!("- `{}`: {}\n", name, Self::format_type(ty)));
             }
-            output.push_str("\n");
+            output.push('\n');
         }
         
         // Return type

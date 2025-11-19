@@ -546,11 +546,10 @@ impl Optimizer {
             for block in &func.blocks {
                 if let Some(terminator) = &block.terminator {
                     match terminator {
-                        Instruction::Return { value } => {
-                            if let Some(val) = value {
-                                used_values.insert(*val);
-                            }
+                        Instruction::Return { value: Some(val) } => {
+                            used_values.insert(*val);
                         }
+                        Instruction::Return { value: None } => {}
                         Instruction::Branch { cond, .. } => {
                             used_values.insert(*cond);
                         }
@@ -887,7 +886,8 @@ impl Optimizer {
         let mut new_ir = ir.clone();
         
         // Find functions marked for inlining and create a map of name -> function data (clone needed data)
-        let mut inline_candidates: HashMap<String, (FunctionId, BlockId, Vec<BasicBlock>, Vec<(String, ValueId, IrType)>)> = HashMap::new();
+        type InlineCandidate = (FunctionId, BlockId, Vec<BasicBlock>, Vec<(String, ValueId, IrType)>);
+        let mut inline_candidates: HashMap<String, InlineCandidate> = HashMap::new();
         for func in &new_ir.functions {
             if func.attributes.iter().any(|a| a == "@inline" || a == "inline") {
                 // Check if function is small enough to inline
