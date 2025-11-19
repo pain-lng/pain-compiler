@@ -37,6 +37,7 @@ pub enum TypeError {
     },
 }
 
+#[allow(clippy::result_large_err)]
 pub type TypeResult<T> = Result<T, TypeError>;
 
 #[derive(Debug, Clone)]
@@ -76,6 +77,13 @@ impl TypeContext {
     }
 }
 
+impl Default for TypeContext {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[allow(clippy::result_large_err)]
 pub fn type_check_program(program: &Program) -> TypeResult<()> {
     let mut ctx = TypeContext::new();
 
@@ -106,6 +114,7 @@ pub fn type_check_program(program: &Program) -> TypeResult<()> {
     Ok(())
 }
 
+#[allow(clippy::result_large_err)]
 fn type_check_class(ctx: &mut TypeContext, class: &Class) -> TypeResult<()> {
     // Create a new context for class methods (with access to class fields)
     let mut class_ctx = ctx.clone();
@@ -135,6 +144,7 @@ fn type_check_class(ctx: &mut TypeContext, class: &Class) -> TypeResult<()> {
     Ok(())
 }
 
+#[allow(clippy::result_large_err)]
 fn type_check_function(ctx: &mut TypeContext, func: &Function) -> TypeResult<()> {
     // Create new scope for function parameters
     let mut func_ctx = ctx.clone();
@@ -157,6 +167,7 @@ fn type_check_function(ctx: &mut TypeContext, func: &Function) -> TypeResult<()>
     Ok(())
 }
 
+#[allow(clippy::result_large_err)]
 fn type_check_statement(ctx: &mut TypeContext, stmt: &Statement) -> TypeResult<Type> {
     match stmt {
         Statement::Expr(expr) => {
@@ -261,6 +272,7 @@ fn type_check_statement(ctx: &mut TypeContext, stmt: &Statement) -> TypeResult<T
     }
 }
 
+#[allow(clippy::result_large_err)]
 fn infer_expr_type(ctx: &TypeContext, expr: &Expr) -> TypeResult<Type> {
     match expr {
         Expr::Integer(_) => Ok(Type::Int),
@@ -443,6 +455,7 @@ fn infer_expr_type(ctx: &TypeContext, expr: &Expr) -> TypeResult<Type> {
     }
 }
 
+#[allow(clippy::result_large_err)]
 fn infer_binary_op_type(left: &Type, right: &Type) -> TypeResult<Type> {
     match (left, right) {
         (Type::Int, Type::Int) => Ok(Type::Int),

@@ -70,11 +70,11 @@ impl MlirCodeGenerator {
 
     fn generate_gpu_kernel(&mut self, func: &IrFunction) {
         // Generate GPU kernel using GPU dialect
-        let ret_type = self.mlir_type(&func.return_type);
+        let ret_type = Self::mlir_type(&func.return_type);
         let mut params = Vec::new();
 
         for (name, _value_id, param_type) in &func.params {
-            let mlir_param_type = self.mlir_type(param_type);
+            let mlir_param_type = Self::mlir_type(param_type);
             params.push(format!("{} %{}", mlir_param_type, name));
         }
 
@@ -106,11 +106,11 @@ impl MlirCodeGenerator {
 
     fn generate_regular_function(&mut self, func: &IrFunction) {
         // Generate regular function using func dialect
-        let ret_type = self.mlir_type(&func.return_type);
+        let ret_type = Self::mlir_type(&func.return_type);
         let mut params = Vec::new();
 
         for (name, _value_id, param_type) in &func.params {
-            let mlir_param_type = self.mlir_type(param_type);
+            let mlir_param_type = Self::mlir_type(param_type);
             params.push(format!("{} %{}", mlir_param_type, name));
         }
 
@@ -463,7 +463,7 @@ impl MlirCodeGenerator {
         }
     }
 
-    fn mlir_type(&self, ty: &IrType) -> String {
+    fn mlir_type(ty: &IrType) -> String {
         match ty {
             IrType::Int | IrType::Int64 => "i64".to_string(),
             IrType::Int32 => "i32".to_string(),
@@ -472,11 +472,9 @@ impl MlirCodeGenerator {
             IrType::Bool => "i1".to_string(),
             IrType::Str => "memref<?xi8>".to_string(),
             IrType::Unit => "()".to_string(),
-            IrType::Pointer(inner) => {
-                format!("memref<{}>", self.mlir_type(inner))
-            }
+            IrType::Pointer(inner) => format!("memref<{}>", Self::mlir_type(inner)),
             IrType::Array { element, size } => {
-                let elem_type = self.mlir_type(element);
+                let elem_type = Self::mlir_type(element);
                 if let Some(sz) = size {
                     format!("memref<{}x{}>", sz, elem_type)
                 } else {
@@ -484,7 +482,7 @@ impl MlirCodeGenerator {
                 }
             }
             IrType::Tensor { element, dims } => {
-                let elem_type = self.mlir_type(element);
+                let elem_type = Self::mlir_type(element);
                 let dims_str: Vec<String> = dims
                     .iter()
                     .map(|d| d.map(|s| s.to_string()).unwrap_or_else(|| "?".to_string()))
@@ -502,8 +500,8 @@ impl MlirCodeGenerator {
                 params,
                 return_type,
             } => {
-                let param_types: Vec<String> = params.iter().map(|p| self.mlir_type(p)).collect();
-                let ret_type = self.mlir_type(return_type);
+                let param_types: Vec<String> = params.iter().map(Self::mlir_type).collect();
+                let ret_type = Self::mlir_type(return_type);
                 format!("({}) -> {}", param_types.join(", "), ret_type)
             }
             IrType::Named(name) => format!("%{}", name),

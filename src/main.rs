@@ -181,7 +181,10 @@ fn build(
                 println!("\nGenerated MLIR:\n{}", mlir_ir);
             }
         }
-        "llvm" | _ => {
+        other => {
+            if other != "llvm" {
+                println!("Unknown backend '{}', defaulting to LLVM backend.", backend);
+            }
             // Determine target triple
             let target_triple = target.map(|s| s.to_string()).unwrap_or_else(|| {
                 let detected = llvm_tools::detect_target_triple();

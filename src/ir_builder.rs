@@ -12,7 +12,6 @@ pub struct IrBuilder {
     variable_map: HashMap<String, ValueId>, // Maps variable names to SSA values
     function_map: HashMap<String, FunctionId>, // Maps function names to FunctionId
     class_map: HashMap<String, String>,     // Maps class names to struct names (for now, same name)
-    block_stack: Vec<BlockId>,              // For tracking control flow
     // Loop context for break/continue
     loop_headers: Vec<BlockId>,   // Stack of loop header blocks
     loop_continues: Vec<BlockId>, // Stack of loop continue blocks (after loop)
@@ -27,7 +26,6 @@ impl IrBuilder {
             variable_map: HashMap::new(),
             function_map: HashMap::new(),
             class_map: HashMap::new(),
-            block_stack: Vec::new(),
             loop_headers: Vec::new(),
             loop_continues: Vec::new(),
         }
@@ -72,22 +70,6 @@ impl IrBuilder {
             .insert(class.name.clone(), class.name.clone());
     }
 
-    /// Resolve Named types to Struct types if they refer to classes
-    fn resolve_named_type(&self, name: &str) -> Option<IrType> {
-        if self.class_map.contains_key(name) {
-            if let Some(struct_def) = self.program.get_struct(name) {
-                Some(IrType::Struct {
-                    name: struct_def.name.clone(),
-                    fields: struct_def.fields.clone(),
-                })
-            } else {
-                None
-            }
-        } else {
-            None
-        }
-    }
-
     fn build_method(&mut self, class: &Class, method: &Function) {
         // Build method as a function with mangled name: ClassName_methodName
         let mangled_name = format!("{}__{}", class.name, method.name);
@@ -122,7 +104,7 @@ impl IrBuilder {
         let return_type = method
             .return_type
             .as_ref()
-            .map(|t| IrType::from(t))
+            .map(IrType::from)
             .unwrap_or(IrType::Unit);
 
         // Create function
@@ -155,11 +137,7 @@ impl IrBuilder {
             .find(|b| b.id == current_block_id)
             .expect("Current block not found");
         if current_block.terminator.is_none() {
-            if matches!(func.return_type, IrType::Unit) {
-                current_block.terminator = Some(Instruction::Return { value: None });
-            } else {
-                current_block.terminator = Some(Instruction::Return { value: None });
-            }
+            current_block.terminator = Some(Instruction::Return { value: None });
         }
 
         self.current_function = None;
@@ -186,7 +164,7 @@ impl IrBuilder {
         let return_type = func
             .return_type
             .as_ref()
-            .map(|t| IrType::from(t))
+            .map(IrType::from)
             .unwrap_or(IrType::Unit);
 
         // Create function
@@ -219,13 +197,7 @@ impl IrBuilder {
             .find(|b| b.id == current_block_id)
             .expect("Current block not found");
         if current_block.terminator.is_none() {
-            // Add implicit return
-            if matches!(func.return_type, IrType::Unit) {
-                current_block.terminator = Some(Instruction::Return { value: None });
-            } else {
-                // TODO: Handle missing return value error
-                current_block.terminator = Some(Instruction::Return { value: None });
-            }
+            current_block.terminator = Some(Instruction::Return { value: None });
         }
 
         self.current_function = None;
@@ -426,7 +398,7 @@ impl IrBuilder {
                     let mut mangled_method_name = String::new();
 
                     // Try to find method in function_map by checking all class methods
-                    for (func_name, _) in &self.function_map {
+                    for func_name in self.function_map.keys() {
                         if func_name.ends_with(&format!("__{}", method_name)) {
                             mangled_method_name = func_name.clone();
                             method_found = true;

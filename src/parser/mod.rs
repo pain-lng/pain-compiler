@@ -10,7 +10,7 @@ pub fn parse(source: &str) -> Result<Program, String> {
     let mut lexer = IndentLexer::new(source);
     let mut tokens = Vec::new();
 
-    while let Some(token) = lexer.next() {
+    for token in &mut lexer {
         match token {
             Ok(t) => tokens.push(t),
             Err(_) => return Err("Lexer error".to_string()),

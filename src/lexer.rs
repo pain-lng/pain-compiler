@@ -203,7 +203,7 @@ pub fn tokenize_with_indentation(source: &str) -> Vec<Result<TokenWithSpan, ()>>
     let mut indent_stack = vec![0];
     let mut byte_offset = 0;
 
-    for (_line_num, line) in lines.iter().enumerate() {
+    for line in &lines {
         let line_start_offset = byte_offset;
         let line_indent_start = byte_offset;
 

@@ -12,6 +12,7 @@ pub struct StdlibFunction {
 }
 
 /// Get all standard library functions
+#[allow(clippy::vec_init_then_push)]
 pub fn get_stdlib_functions() -> Vec<StdlibFunction> {
     let mut functions = Vec::new();
 

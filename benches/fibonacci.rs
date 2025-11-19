@@ -4,6 +4,7 @@ use pain_compiler::{parse, type_check_program, CodeGenerator, IrBuilder, Optimiz
 // TODO: Add interpreter benchmarks when interpreter return values are supported
 // fn fibonacci_interpreter(n: i64) -> i64 { ... }
 
+#[allow(dead_code)]
 fn fibonacci_compiled(n: i64) -> i64 {
     let source = format!(
         r#"
@@ -38,8 +39,7 @@ fn benchmark_fibonacci(c: &mut Criterion) {
     // Benchmark IR generation and optimization
     group.bench_function("ir_gen_n10", |b| {
         b.iter(|| {
-            let source = format!(
-                r#"
+            let source = r#"
 fn fib(n: int) -> int:
     if n <= 1:
         return n
@@ -48,7 +48,7 @@ fn fib(n: int) -> int:
 fn main() -> int:
     return fib(10)
 "#
-            );
+            .to_string();
             let program = parse(&source).unwrap();
             type_check_program(&program).unwrap();
             let ir_builder = IrBuilder::new();
@@ -61,8 +61,7 @@ fn main() -> int:
     // Benchmark codegen
     group.bench_function("codegen_n10", |b| {
         b.iter(|| {
-            let source = format!(
-                r#"
+            let source = r#"
 fn fib(n: int) -> int:
     if n <= 1:
         return n
@@ -71,7 +70,7 @@ fn fib(n: int) -> int:
 fn main() -> int:
     return fib(10)
 "#
-            );
+            .to_string();
             let program = parse(&source).unwrap();
             type_check_program(&program).unwrap();
             let ir_builder = IrBuilder::new();

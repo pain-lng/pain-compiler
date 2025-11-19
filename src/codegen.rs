@@ -742,9 +742,8 @@ impl CodeGenerator {
             _ => {
                 // TODO: Implement remaining instructions
                 self.llvm_code.push_str(&format!(
-                    "  {} = add i64 0, 0  ; TODO: {}\n",
-                    result,
-                    format!("{:?}", inst)
+                    "  {} = add i64 0, 0  ; TODO: {:?}\n",
+                    result, inst
                 ));
             }
         }

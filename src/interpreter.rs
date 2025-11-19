@@ -2,7 +2,7 @@
 
 use crate::ast::{Class, Expr, Function, Item, Program, Statement, Type};
 use crate::stdlib::is_stdlib_function;
-use pain_runtime::{ClassInstance, Runtime, Value};
+use pain_runtime::{ClassInstance, Value};
 use std::collections::HashMap;
 
 /// Control flow result
@@ -64,16 +64,12 @@ impl Environment {
 }
 
 /// Interpreter for executing Pain programs
-pub struct Interpreter {
-    runtime: Runtime,
-}
+pub struct Interpreter;
 
 impl Interpreter {
     /// Create a new interpreter instance
     pub fn new() -> Result<Self, &'static str> {
-        Ok(Self {
-            runtime: Runtime::new()?,
-        })
+        Ok(Self)
     }
 
     /// Interpret a Pain program
@@ -334,10 +330,7 @@ impl Interpreter {
             }
 
             // Variables
-            Expr::Ident(name) => env
-                .get_var(name)
-                .cloned()
-                .ok_or_else(|| "Undefined variable"),
+            Expr::Ident(name) => env.get_var(name).cloned().ok_or("Undefined variable"),
 
             // Binary operations
             Expr::Add(lhs, rhs) => {
@@ -754,9 +747,9 @@ impl Interpreter {
                 let obj_val = self.eval_expr(obj, env)?;
                 match obj_val {
                     Value::Object(instance) => instance
-                        .get_field(&field_name)
+                        .get_field(field_name)
                         .cloned()
-                        .ok_or_else(|| "Field not found"),
+                        .ok_or("Field not found"),
                     _ => Err("Member access only supported for objects"),
                 }
             }
@@ -783,10 +776,7 @@ impl Interpreter {
             // Object creation: new ClassName(args...)
             Expr::New { class_name, args } => {
                 // Get class definition and clone it
-                let class = env
-                    .get_class(&class_name)
-                    .ok_or_else(|| "Class not found")?
-                    .clone();
+                let class = env.get_class(class_name).ok_or("Class not found")?.clone();
 
                 // Evaluate arguments
                 let arg_values: Vec<Value> = args

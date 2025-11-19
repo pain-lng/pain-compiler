@@ -82,13 +82,10 @@ pub fn compile_llvm_ir_to_object(
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let stdout = String::from_utf8_lossy(&output.stdout);
-        return Err(io::Error::new(
-            io::ErrorKind::Other,
-            format!(
-                "{} failed:\nSTDERR: {}\nSTDOUT: {}",
-                compiler, stderr, stdout
-            ),
-        ));
+        return Err(io::Error::other(format!(
+            "{} failed:\nSTDERR: {}\nSTDOUT: {}",
+            compiler, stderr, stdout
+        )));
     }
 
     Ok(())
@@ -122,10 +119,7 @@ pub fn link_object_to_executable(
             cmd.arg(object_path);
         }
         _ => {
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
-                format!("Unknown linker: {}", linker),
-            ));
+            return Err(io::Error::other(format!("Unknown linker: {}", linker)));
         }
     }
 
@@ -133,10 +127,7 @@ pub fn link_object_to_executable(
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(io::Error::new(
-            io::ErrorKind::Other,
-            format!("Linker failed: {}", stderr),
-        ));
+        return Err(io::Error::other(format!("Linker failed: {}", stderr)));
     }
 
     Ok(())
@@ -219,10 +210,10 @@ pub fn compile_to_executable(
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             let stdout = String::from_utf8_lossy(&output.stdout);
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
-                format!("clang failed:\nSTDERR: {}\nSTDOUT: {}", stderr, stdout),
-            ));
+            return Err(io::Error::other(format!(
+                "clang failed:\nSTDERR: {}\nSTDOUT: {}",
+                stderr, stdout
+            )));
         }
 
         println!("✓ Executable generated: {:?}", executable_path);

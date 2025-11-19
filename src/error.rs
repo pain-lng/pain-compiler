@@ -28,8 +28,8 @@ impl<'a> ErrorFormatter<'a> {
             } => self.format_with_span(
                 &format!(
                     "error: type mismatch: expected `{}`, found `{}`",
-                    self.format_type(expected),
-                    self.format_type(found)
+                    Self::format_type(expected),
+                    Self::format_type(found)
                 ),
                 *span,
             ),
@@ -44,13 +44,13 @@ impl<'a> ErrorFormatter<'a> {
             } => {
                 let right_str = right
                     .as_ref()
-                    .map(|t| format!(" and `{}`", self.format_type(t)))
+                    .map(|t| format!(" and `{}`", Self::format_type(t)))
                     .unwrap_or_default();
                 self.format_with_span(
                     &format!(
                         "error: invalid operation `{}` for types `{}`{}",
                         op,
-                        self.format_type(left),
+                        Self::format_type(left),
                         right_str
                     ),
                     *span,
@@ -102,7 +102,7 @@ impl<'a> ErrorFormatter<'a> {
         output
     }
 
-    fn format_type(&self, ty: &crate::ast::Type) -> String {
+    fn format_type(ty: &crate::ast::Type) -> String {
         match ty {
             crate::ast::Type::Int => "int".to_string(),
             crate::ast::Type::Str => "str".to_string(),
@@ -110,10 +110,14 @@ impl<'a> ErrorFormatter<'a> {
             crate::ast::Type::Float64 => "float64".to_string(),
             crate::ast::Type::Bool => "bool".to_string(),
             crate::ast::Type::Dynamic => "dynamic".to_string(),
-            crate::ast::Type::List(elem) => format!("list[{}]", self.format_type(elem)),
-            crate::ast::Type::Array(elem) => format!("array[{}]", self.format_type(elem)),
+            crate::ast::Type::List(elem) => format!("list[{}]", Self::format_type(elem)),
+            crate::ast::Type::Array(elem) => format!("array[{}]", Self::format_type(elem)),
             crate::ast::Type::Map(key, val) => {
-                format!("map[{}, {}]", self.format_type(key), self.format_type(val))
+                format!(
+                    "map[{}, {}]",
+                    Self::format_type(key),
+                    Self::format_type(val)
+                )
             }
             crate::ast::Type::Tensor(elem, dims) => {
                 let dims_str = if dims.is_empty() {
@@ -121,7 +125,7 @@ impl<'a> ErrorFormatter<'a> {
                 } else {
                     format!(", {:?}", dims)
                 };
-                format!("Tensor[{}{}]", self.format_type(elem), dims_str)
+                format!("Tensor[{}{}]", Self::format_type(elem), dims_str)
             }
             crate::ast::Type::Named(name) => name.clone(),
         }
