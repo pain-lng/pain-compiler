@@ -32,20 +32,14 @@ pub fn get_stdlib_functions() -> Vec<StdlibFunction> {
 
     functions.push(StdlibFunction {
         name: "min".to_string(),
-        params: vec![
-            ("a".to_string(), Type::Int),
-            ("b".to_string(), Type::Int),
-        ],
+        params: vec![("a".to_string(), Type::Int), ("b".to_string(), Type::Int)],
         return_type: Type::Int,
         description: "Returns the minimum of two integers".to_string(),
     });
 
     functions.push(StdlibFunction {
         name: "max".to_string(),
-        params: vec![
-            ("a".to_string(), Type::Int),
-            ("b".to_string(), Type::Int),
-        ],
+        params: vec![("a".to_string(), Type::Int), ("b".to_string(), Type::Int)],
         return_type: Type::Int,
         description: "Returns the maximum of two integers".to_string(),
     });
@@ -102,7 +96,7 @@ pub fn get_stdlib_functions() -> Vec<StdlibFunction> {
         return_type: Type::Int,
         description: "Returns the length of a string".to_string(),
     });
-    
+
     // List/Array functions
     functions.push(StdlibFunction {
         name: "len".to_string(),
@@ -110,7 +104,7 @@ pub fn get_stdlib_functions() -> Vec<StdlibFunction> {
         return_type: Type::Int,
         description: "Returns the length of a list".to_string(),
     });
-    
+
     functions.push(StdlibFunction {
         name: "len".to_string(),
         params: vec![("arr".to_string(), Type::Array(Box::new(Type::Dynamic)))],
@@ -120,10 +114,7 @@ pub fn get_stdlib_functions() -> Vec<StdlibFunction> {
 
     functions.push(StdlibFunction {
         name: "concat".to_string(),
-        params: vec![
-            ("a".to_string(), Type::Str),
-            ("b".to_string(), Type::Str),
-        ],
+        params: vec![("a".to_string(), Type::Str), ("b".to_string(), Type::Str)],
         return_type: Type::Str,
         description: "Concatenates two strings".to_string(),
     });
@@ -212,9 +203,28 @@ pub fn get_stdlib_functions() -> Vec<StdlibFunction> {
 pub fn is_stdlib_function(name: &str) -> bool {
     matches!(
         name,
-        "abs" | "min" | "max" | "sqrt" | "pow" | "sin" | "cos" | "floor" | "ceil"
-            | "len" | "concat" | "substring" | "contains" | "starts_with" | "ends_with"
-            | "trim" | "to_int" | "to_float" | "to_string" | "print" | "push" | "pop"
+        "abs"
+            | "min"
+            | "max"
+            | "sqrt"
+            | "pow"
+            | "sin"
+            | "cos"
+            | "floor"
+            | "ceil"
+            | "len"
+            | "concat"
+            | "substring"
+            | "contains"
+            | "starts_with"
+            | "ends_with"
+            | "trim"
+            | "to_int"
+            | "to_float"
+            | "to_string"
+            | "print"
+            | "push"
+            | "pop"
     )
 }
 
@@ -328,4 +338,3 @@ pub fn get_stdlib_return_type(name: &str, arg_types: &[Type]) -> Option<Type> {
         _ => None,
     }
 }
-

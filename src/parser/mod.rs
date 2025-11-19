@@ -2,21 +2,21 @@
 // TODO: Migrate to lalrpop when token integration is resolved
 
 use crate::ast::*;
-use crate::lexer::{Token, IndentLexer, TokenWithSpan};
-use crate::span::{Span, Position};
+use crate::lexer::{IndentLexer, Token, TokenWithSpan};
+use crate::span::{Position, Span};
 
 pub fn parse(source: &str) -> Result<Program, String> {
     // Use IndentLexer for proper indentation handling
     let mut lexer = IndentLexer::new(source);
     let mut tokens = Vec::new();
-    
+
     while let Some(token) = lexer.next() {
         match token {
             Ok(t) => tokens.push(t),
             Err(_) => return Err("Lexer error".to_string()),
         }
     }
-    
+
     let mut parser = Parser::new(&tokens, source);
     parser.parse_program()
 }
@@ -29,17 +29,21 @@ struct Parser<'a> {
 
 impl<'a> Parser<'a> {
     fn new(tokens: &'a [TokenWithSpan], source: &'a str) -> Self {
-        Self { tokens, _source: source, pos: 0 }
+        Self {
+            tokens,
+            _source: source,
+            pos: 0,
+        }
     }
-    
+
     fn peek(&self) -> Option<&TokenWithSpan> {
         self.tokens.get(self.pos)
     }
-    
+
     fn peek_token(&self) -> Option<&Token> {
         self.peek().map(|t| &t.token)
     }
-    
+
     fn next(&mut self) -> Option<&TokenWithSpan> {
         let token = self.tokens.get(self.pos);
         if token.is_some() {
@@ -47,7 +51,7 @@ impl<'a> Parser<'a> {
         }
         token
     }
-    
+
     fn current_span(&self) -> Span {
         if let Some(token) = self.peek() {
             token.span
@@ -57,59 +61,80 @@ impl<'a> Parser<'a> {
             Span::single(Position::start())
         }
     }
-    
+
     fn expect(&mut self, expected: Token) -> Result<Span, String> {
         match self.next() {
-            Some(token_span) if std::mem::discriminant(&token_span.token) == std::mem::discriminant(&expected) => {
+            Some(token_span)
+                if std::mem::discriminant(&token_span.token)
+                    == std::mem::discriminant(&expected) =>
+            {
                 Ok(token_span.span)
             }
             Some(token_span) => {
                 let span = token_span.span;
-                Err(format!("Expected {:?}, got {:?} at {}:{}", expected, token_span.token, span.line(), span.column()))
+                Err(format!(
+                    "Expected {:?}, got {:?} at {}:{}",
+                    expected,
+                    token_span.token,
+                    span.line(),
+                    span.column()
+                ))
             }
             None => {
                 let span = self.current_span();
-                Err(format!("Expected {:?}, got EOF at {}:{}", expected, span.line(), span.column()))
+                Err(format!(
+                    "Expected {:?}, got EOF at {}:{}",
+                    expected,
+                    span.line(),
+                    span.column()
+                ))
             }
         }
     }
-    
+
     fn parse_program(&mut self) -> Result<Program, String> {
         let start_span = if let Some(first) = self.tokens.first() {
             first.span
         } else {
             Span::single(Position::start())
         };
-        
+
         let mut items = Vec::new();
         while self.peek().is_some() {
             items.push(self.parse_item()?);
         }
-        
+
         let end_span = if let Some(last) = self.tokens.last() {
             last.span
         } else {
             start_span
         };
-        
+
         let span = Span::new(start_span.start, end_span.end);
         Ok(Program { items, span })
     }
-    
+
     fn parse_item(&mut self) -> Result<Item, String> {
         if matches!(self.peek_token(), Some(Token::Class)) {
             Ok(Item::Class(self.parse_class()?))
-        } else if matches!(self.peek_token(), Some(Token::Fn) | Some(Token::At) | Some(Token::DocComment(_))) {
+        } else if matches!(
+            self.peek_token(),
+            Some(Token::Fn) | Some(Token::At) | Some(Token::DocComment(_))
+        ) {
             Ok(Item::Function(self.parse_function()?))
         } else {
             let span = self.current_span();
-            Err(format!("Expected function, class, or attribute at {}:{}", span.line(), span.column()))
+            Err(format!(
+                "Expected function, class, or attribute at {}:{}",
+                span.line(),
+                span.column()
+            ))
         }
     }
-    
+
     fn parse_function(&mut self) -> Result<Function, String> {
         let func_start_span = self.current_span();
-        
+
         // Parse doc comment if present (before attributes)
         let doc = if matches!(self.peek_token(), Some(Token::DocComment(_))) {
             if let Some(token_span) = self.next() {
@@ -124,44 +149,54 @@ impl<'a> Parser<'a> {
         } else {
             None
         };
-        
+
         let mut attrs = Vec::new();
         while matches!(self.peek_token(), Some(Token::At)) {
             attrs.push(self.parse_attribute()?);
         }
-        
+
         self.expect(Token::Fn)?;
-        
+
         let name_span = self.current_span();
         let name = match self.next() {
             Some(token_span) if matches!(token_span.token, Token::Ident(_)) => {
                 if let Token::Ident(name) = &token_span.token {
                     name.clone()
                 } else {
-                    return Err(format!("Expected function name at {}:{}", name_span.line(), name_span.column()));
+                    return Err(format!(
+                        "Expected function name at {}:{}",
+                        name_span.line(),
+                        name_span.column()
+                    ));
                 }
             }
-            _ => return Err(format!("Expected function name at {}:{}", name_span.line(), name_span.column())),
+            _ => {
+                return Err(format!(
+                    "Expected function name at {}:{}",
+                    name_span.line(),
+                    name_span.column()
+                ))
+            }
         };
-        
+
         self.expect(Token::LParen)?;
         let params = self.parse_parameter_list()?;
         self.expect(Token::RParen)?;
-        
+
         let return_type = if matches!(self.peek_token(), Some(Token::Arrow)) {
             self.next();
             Some(self.parse_type()?)
         } else {
             None
         };
-        
+
         self.expect(Token::Colon)?;
-        
+
         // Expect Indent token after colon for function body (optional for top-level)
         let mut body = Vec::new();
         if matches!(self.peek_token(), Some(Token::Indent)) {
             self.next(); // consume Indent
-            // Parse function body until Dedent
+                         // Parse function body until Dedent
             while !matches!(self.peek_token(), Some(Token::Dedent) | None) {
                 body.push(self.parse_statement()?);
             }
@@ -171,13 +206,16 @@ impl<'a> Parser<'a> {
             }
         } else {
             // No indentation - parse single statement or empty body
-            if !matches!(self.peek_token(), Some(Token::Fn) | Some(Token::At) | Some(Token::DocComment(_)) | None) {
+            if !matches!(
+                self.peek_token(),
+                Some(Token::Fn) | Some(Token::At) | Some(Token::DocComment(_)) | None
+            ) {
                 body.push(self.parse_statement()?);
             }
         }
-        
+
         let func_end_span = self.current_span();
-        
+
         let span = Span::new(func_start_span.start, func_end_span.end);
         Ok(Function {
             doc,
@@ -189,10 +227,10 @@ impl<'a> Parser<'a> {
             span,
         })
     }
-    
+
     fn parse_class(&mut self) -> Result<Class, String> {
         let class_start_span = self.current_span();
-        
+
         // Parse doc comment if present
         let doc = if matches!(self.peek_token(), Some(Token::DocComment(_))) {
             if let Some(token_span) = self.next() {
@@ -207,56 +245,77 @@ impl<'a> Parser<'a> {
         } else {
             None
         };
-        
+
         let mut attrs = Vec::new();
         while matches!(self.peek_token(), Some(Token::At)) {
             attrs.push(self.parse_attribute()?);
         }
-        
+
         self.expect(Token::Class)?;
-        
+
         let name_span = self.current_span();
         let name = match self.next() {
             Some(token_span) if matches!(token_span.token, Token::Ident(_)) => {
                 if let Token::Ident(name) = &token_span.token {
                     name.clone()
                 } else {
-                    return Err(format!("Expected class name at {}:{}", name_span.line(), name_span.column()));
+                    return Err(format!(
+                        "Expected class name at {}:{}",
+                        name_span.line(),
+                        name_span.column()
+                    ));
                 }
             }
-            _ => return Err(format!("Expected class name at {}:{}", name_span.line(), name_span.column())),
+            _ => {
+                return Err(format!(
+                    "Expected class name at {}:{}",
+                    name_span.line(),
+                    name_span.column()
+                ))
+            }
         };
-        
+
         self.expect(Token::Colon)?;
-        
+
         // Expect Indent token after colon
         if !matches!(self.peek_token(), Some(Token::Indent)) {
             let span = self.current_span();
-            return Err(format!("Expected indented block after ':' at {}:{}", span.line(), span.column()));
+            return Err(format!(
+                "Expected indented block after ':' at {}:{}",
+                span.line(),
+                span.column()
+            ));
         }
         self.next(); // consume Indent
-        
+
         let mut fields = Vec::new();
         let mut methods = Vec::new();
-        
+
         // Parse class body until Dedent
         while !matches!(self.peek_token(), Some(Token::Dedent) | None) {
             // Check if it's a field (var/let with type annotation) or method (fn)
             if matches!(self.peek_token(), Some(Token::Var) | Some(Token::Let)) {
                 fields.push(self.parse_class_field()?);
-            } else if matches!(self.peek_token(), Some(Token::Fn) | Some(Token::At) | Some(Token::DocComment(_))) {
+            } else if matches!(
+                self.peek_token(),
+                Some(Token::Fn) | Some(Token::At) | Some(Token::DocComment(_))
+            ) {
                 methods.push(self.parse_function()?);
             } else {
                 let span = self.current_span();
-                return Err(format!("Expected field or method in class body at {}:{}", span.line(), span.column()));
+                return Err(format!(
+                    "Expected field or method in class body at {}:{}",
+                    span.line(),
+                    span.column()
+                ));
             }
         }
-        
+
         // Consume Dedent if present
         if matches!(self.peek_token(), Some(Token::Dedent)) {
             self.next();
         }
-        
+
         let class_end_span = if let Some(last_method) = methods.last() {
             last_method.span
         } else if let Some(last_field) = fields.last() {
@@ -264,7 +323,7 @@ impl<'a> Parser<'a> {
         } else {
             self.current_span()
         };
-        
+
         let span = Span::new(class_start_span.start, class_end_span.end);
         Ok(Class {
             doc,
@@ -275,7 +334,7 @@ impl<'a> Parser<'a> {
             span,
         })
     }
-    
+
     fn parse_class_field(&mut self) -> Result<ClassField, String> {
         let field_start_span = self.current_span();
         let mutable = matches!(self.peek_token(), Some(Token::Var));
@@ -283,30 +342,44 @@ impl<'a> Parser<'a> {
             self.next();
         } else {
             let span = self.current_span();
-            return Err(format!("Expected 'var' or 'let' for class field at {}:{}", span.line(), span.column()));
+            return Err(format!(
+                "Expected 'var' or 'let' for class field at {}:{}",
+                span.line(),
+                span.column()
+            ));
         }
-        
+
         let name_span = self.current_span();
         let name = match self.next() {
             Some(token_span) if matches!(token_span.token, Token::Ident(_)) => {
                 if let Token::Ident(name) = &token_span.token {
                     name.clone()
                 } else {
-                    return Err(format!("Expected field name at {}:{}", name_span.line(), name_span.column()));
+                    return Err(format!(
+                        "Expected field name at {}:{}",
+                        name_span.line(),
+                        name_span.column()
+                    ));
                 }
             }
-            _ => return Err(format!("Expected field name at {}:{}", name_span.line(), name_span.column())),
+            _ => {
+                return Err(format!(
+                    "Expected field name at {}:{}",
+                    name_span.line(),
+                    name_span.column()
+                ))
+            }
         };
-        
+
         self.expect(Token::Colon)?;
         let ty = self.parse_type()?;
-        
+
         // Optional initializer (for now, we'll skip it)
         if matches!(self.peek_token(), Some(Token::Assign)) {
             self.next();
             self.parse_expr()?; // Skip initializer for now
         }
-        
+
         let field_end_span = self.current_span();
         let span = Span::new(field_start_span.start, field_end_span.end);
         Ok(ClassField {
@@ -316,7 +389,7 @@ impl<'a> Parser<'a> {
             span,
         })
     }
-    
+
     fn parse_attribute(&mut self) -> Result<Attribute, String> {
         self.expect(Token::At)?;
         let name_span = self.current_span();
@@ -325,12 +398,22 @@ impl<'a> Parser<'a> {
                 if let Token::Ident(name) = &token_span.token {
                     name.clone()
                 } else {
-                    return Err(format!("Expected attribute name at {}:{}", name_span.line(), name_span.column()));
+                    return Err(format!(
+                        "Expected attribute name at {}:{}",
+                        name_span.line(),
+                        name_span.column()
+                    ));
                 }
             }
-            _ => return Err(format!("Expected attribute name at {}:{}", name_span.line(), name_span.column())),
+            _ => {
+                return Err(format!(
+                    "Expected attribute name at {}:{}",
+                    name_span.line(),
+                    name_span.column()
+                ))
+            }
         };
-        
+
         let args = if matches!(self.peek_token(), Some(Token::LParen)) {
             self.next();
             let args = self.parse_comma_list(|p| p.parse_expr())?;
@@ -339,14 +422,14 @@ impl<'a> Parser<'a> {
         } else {
             Vec::new()
         };
-        
+
         Ok(Attribute { name, args })
     }
-    
+
     fn parse_parameter_list(&mut self) -> Result<Vec<Parameter>, String> {
         self.parse_comma_list(|p| p.parse_parameter())
     }
-    
+
     fn parse_parameter(&mut self) -> Result<Parameter, String> {
         let name_span = self.current_span();
         let name = match self.next() {
@@ -354,16 +437,26 @@ impl<'a> Parser<'a> {
                 if let Token::Ident(name) = &token_span.token {
                     name.clone()
                 } else {
-                    return Err(format!("Expected parameter name at {}:{}", name_span.line(), name_span.column()));
+                    return Err(format!(
+                        "Expected parameter name at {}:{}",
+                        name_span.line(),
+                        name_span.column()
+                    ));
                 }
             }
-            _ => return Err(format!("Expected parameter name at {}:{}", name_span.line(), name_span.column())),
+            _ => {
+                return Err(format!(
+                    "Expected parameter name at {}:{}",
+                    name_span.line(),
+                    name_span.column()
+                ))
+            }
         };
         self.expect(Token::Colon)?;
         let ty = self.parse_type()?;
         Ok(Parameter { name, ty })
     }
-    
+
     fn parse_type(&mut self) -> Result<Type, String> {
         match self.next() {
             Some(token_span) => match &token_span.token {
@@ -396,16 +489,24 @@ impl<'a> Parser<'a> {
                 Token::Ident(name) => Ok(Type::Named(name.clone())),
                 _ => {
                     let span = token_span.span;
-                    Err(format!("Expected type at {}:{}", span.line(), span.column()))
+                    Err(format!(
+                        "Expected type at {}:{}",
+                        span.line(),
+                        span.column()
+                    ))
                 }
-            }
+            },
             None => {
                 let span = self.current_span();
-                Err(format!("Expected type at {}:{}", span.line(), span.column()))
+                Err(format!(
+                    "Expected type at {}:{}",
+                    span.line(),
+                    span.column()
+                ))
             }
         }
     }
-    
+
     fn parse_statement(&mut self) -> Result<Statement, String> {
         match self.peek_token() {
             Some(Token::Let) => {
@@ -416,10 +517,20 @@ impl<'a> Parser<'a> {
                         if let Token::Ident(name) = &token_span.token {
                             name.clone()
                         } else {
-                            return Err(format!("Expected variable name at {}:{}", name_span.line(), name_span.column()));
+                            return Err(format!(
+                                "Expected variable name at {}:{}",
+                                name_span.line(),
+                                name_span.column()
+                            ));
                         }
                     }
-                    _ => return Err(format!("Expected variable name at {}:{}", name_span.line(), name_span.column())),
+                    _ => {
+                        return Err(format!(
+                            "Expected variable name at {}:{}",
+                            name_span.line(),
+                            name_span.column()
+                        ))
+                    }
                 };
                 let ty = if matches!(self.peek_token(), Some(Token::Colon)) {
                     self.next();
@@ -444,10 +555,20 @@ impl<'a> Parser<'a> {
                         if let Token::Ident(name) = &token_span.token {
                             name.clone()
                         } else {
-                            return Err(format!("Expected variable name at {}:{}", name_span.line(), name_span.column()));
+                            return Err(format!(
+                                "Expected variable name at {}:{}",
+                                name_span.line(),
+                                name_span.column()
+                            ));
                         }
                     }
-                    _ => return Err(format!("Expected variable name at {}:{}", name_span.line(), name_span.column())),
+                    _ => {
+                        return Err(format!(
+                            "Expected variable name at {}:{}",
+                            name_span.line(),
+                            name_span.column()
+                        ))
+                    }
                 };
                 let ty = if matches!(self.peek_token(), Some(Token::Colon)) {
                     self.next();
@@ -466,7 +587,10 @@ impl<'a> Parser<'a> {
             }
             Some(Token::Return) => {
                 self.next();
-                let expr = if !matches!(self.peek_token(), Some(Token::Semicolon) | Some(Token::Colon) | None) {
+                let expr = if !matches!(
+                    self.peek_token(),
+                    Some(Token::Semicolon) | Some(Token::Colon) | None
+                ) {
                     Some(self.parse_expr()?)
                 } else {
                     None
@@ -477,47 +601,58 @@ impl<'a> Parser<'a> {
                 self.next();
                 let cond = self.parse_expr()?;
                 self.expect(Token::Colon)?;
-                
+
                 // Expect Indent token after colon
                 if !matches!(self.peek_token(), Some(Token::Indent)) {
                     let span = self.current_span();
-                    return Err(format!("Expected indented block after ':' at {}:{}", span.line(), span.column()));
+                    return Err(format!(
+                        "Expected indented block after ':' at {}:{}",
+                        span.line(),
+                        span.column()
+                    ));
                 }
                 self.next(); // consume Indent
-                
+
                 let mut then = Vec::new();
                 // Parse if body until Dedent
-                while !matches!(self.peek_token(), Some(Token::Dedent) | Some(Token::Else) | None) {
+                while !matches!(
+                    self.peek_token(),
+                    Some(Token::Dedent) | Some(Token::Else) | None
+                ) {
                     then.push(self.parse_statement()?);
                 }
-                
+
                 // Consume Dedent if present
                 if matches!(self.peek_token(), Some(Token::Dedent)) {
                     self.next();
                 }
-                
+
                 let else_ = if matches!(self.peek_token(), Some(Token::Else)) {
                     self.next();
                     self.expect(Token::Colon)?;
-                    
+
                     // Expect Indent token after else colon
                     if !matches!(self.peek_token(), Some(Token::Indent)) {
                         let span = self.current_span();
-                        return Err(format!("Expected indented block after 'else:' at {}:{}", span.line(), span.column()));
+                        return Err(format!(
+                            "Expected indented block after 'else:' at {}:{}",
+                            span.line(),
+                            span.column()
+                        ));
                     }
                     self.next(); // consume Indent
-                    
+
                     let mut else_body = Vec::new();
                     // Parse else body until Dedent
                     while !matches!(self.peek_token(), Some(Token::Dedent) | None) {
                         else_body.push(self.parse_statement()?);
                     }
-                    
+
                     // Consume Dedent if present
                     if matches!(self.peek_token(), Some(Token::Dedent)) {
                         self.next();
                     }
-                    
+
                     Some(else_body)
                 } else {
                     None
@@ -532,58 +667,76 @@ impl<'a> Parser<'a> {
                         if let Token::Ident(name) = &token_span.token {
                             name.clone()
                         } else {
-                            return Err(format!("Expected variable name at {}:{}", var_span.line(), var_span.column()));
+                            return Err(format!(
+                                "Expected variable name at {}:{}",
+                                var_span.line(),
+                                var_span.column()
+                            ));
                         }
                     }
-                    _ => return Err(format!("Expected variable name at {}:{}", var_span.line(), var_span.column())),
+                    _ => {
+                        return Err(format!(
+                            "Expected variable name at {}:{}",
+                            var_span.line(),
+                            var_span.column()
+                        ))
+                    }
                 };
                 self.expect(Token::In)?;
                 let iter = self.parse_expr()?;
                 self.expect(Token::Colon)?;
-                
+
                 // Expect Indent token after colon
                 if !matches!(self.peek_token(), Some(Token::Indent)) {
                     let span = self.current_span();
-                    return Err(format!("Expected indented block after ':' at {}:{}", span.line(), span.column()));
+                    return Err(format!(
+                        "Expected indented block after ':' at {}:{}",
+                        span.line(),
+                        span.column()
+                    ));
                 }
                 self.next(); // consume Indent
-                
+
                 let mut body = Vec::new();
                 // Parse for body until Dedent
                 while !matches!(self.peek_token(), Some(Token::Dedent) | None) {
                     body.push(self.parse_statement()?);
                 }
-                
+
                 // Consume Dedent if present
                 if matches!(self.peek_token(), Some(Token::Dedent)) {
                     self.next();
                 }
-                
+
                 Ok(Statement::For { var, iter, body })
             }
             Some(Token::While) => {
                 self.next();
                 let cond = self.parse_expr()?;
                 self.expect(Token::Colon)?;
-                
+
                 // Expect Indent token after colon
                 if !matches!(self.peek_token(), Some(Token::Indent)) {
                     let span = self.current_span();
-                    return Err(format!("Expected indented block after ':' at {}:{}", span.line(), span.column()));
+                    return Err(format!(
+                        "Expected indented block after ':' at {}:{}",
+                        span.line(),
+                        span.column()
+                    ));
                 }
                 self.next(); // consume Indent
-                
+
                 let mut body = Vec::new();
                 // Parse while body until Dedent
                 while !matches!(self.peek_token(), Some(Token::Dedent) | None) {
                     body.push(self.parse_statement()?);
                 }
-                
+
                 // Consume Dedent if present
                 if matches!(self.peek_token(), Some(Token::Dedent)) {
                     self.next();
                 }
-                
+
                 Ok(Statement::While { cond, body })
             }
             Some(Token::Break) => {
@@ -609,16 +762,23 @@ impl<'a> Parser<'a> {
             }
         }
     }
-    
+
     fn parse_expr(&mut self) -> Result<Expr, String> {
         self.parse_expr_assign()
     }
-    
+
     fn parse_expr_assign(&mut self) -> Result<Expr, String> {
         let mut left = self.parse_expr_or()?;
-        
+
         // Handle assignment operators (lowest precedence)
-        while matches!(self.peek_token(), Some(Token::Assign) | Some(Token::PlusEq) | Some(Token::MinusEq) | Some(Token::StarEq) | Some(Token::SlashEq)) {
+        while matches!(
+            self.peek_token(),
+            Some(Token::Assign)
+                | Some(Token::PlusEq)
+                | Some(Token::MinusEq)
+                | Some(Token::StarEq)
+                | Some(Token::SlashEq)
+        ) {
             let op = if let Some(token_span) = self.peek() {
                 token_span.token.clone()
             } else {
@@ -626,7 +786,7 @@ impl<'a> Parser<'a> {
             };
             self.next();
             let right = self.parse_expr_or()?;
-            
+
             left = match op {
                 Token::Assign => Expr::Assign(Box::new(left), Box::new(right)),
                 Token::PlusEq => Expr::AddAssign(Box::new(left), Box::new(right)),
@@ -636,10 +796,10 @@ impl<'a> Parser<'a> {
                 _ => unreachable!(),
             };
         }
-        
+
         Ok(left)
     }
-    
+
     fn parse_expr_or(&mut self) -> Result<Expr, String> {
         let mut left = self.parse_expr_and()?;
         while matches!(self.peek_token(), Some(Token::Or)) {
@@ -649,7 +809,7 @@ impl<'a> Parser<'a> {
         }
         Ok(left)
     }
-    
+
     fn parse_expr_and(&mut self) -> Result<Expr, String> {
         let mut left = self.parse_expr_eq()?;
         while matches!(self.peek_token(), Some(Token::And)) {
@@ -659,7 +819,7 @@ impl<'a> Parser<'a> {
         }
         Ok(left)
     }
-    
+
     fn parse_expr_eq(&mut self) -> Result<Expr, String> {
         let mut left = self.parse_expr_cmp()?;
         while matches!(self.peek_token(), Some(Token::EqEq) | Some(Token::Ne)) {
@@ -678,10 +838,13 @@ impl<'a> Parser<'a> {
         }
         Ok(left)
     }
-    
+
     fn parse_expr_cmp(&mut self) -> Result<Expr, String> {
         let mut left = self.parse_expr_add()?;
-        while matches!(self.peek_token(), Some(Token::Lt) | Some(Token::Gt) | Some(Token::Le) | Some(Token::Ge)) {
+        while matches!(
+            self.peek_token(),
+            Some(Token::Lt) | Some(Token::Gt) | Some(Token::Le) | Some(Token::Ge)
+        ) {
             let op = if let Some(token_span) = self.peek() {
                 token_span.token.clone()
             } else {
@@ -699,7 +862,7 @@ impl<'a> Parser<'a> {
         }
         Ok(left)
     }
-    
+
     fn parse_expr_add(&mut self) -> Result<Expr, String> {
         let mut left = self.parse_expr_mul()?;
         while matches!(self.peek_token(), Some(Token::Plus) | Some(Token::Minus)) {
@@ -718,10 +881,13 @@ impl<'a> Parser<'a> {
         }
         Ok(left)
     }
-    
+
     fn parse_expr_mul(&mut self) -> Result<Expr, String> {
         let mut left = self.parse_expr_unary()?;
-        while matches!(self.peek_token(), Some(Token::Star) | Some(Token::Slash) | Some(Token::Percent)) {
+        while matches!(
+            self.peek_token(),
+            Some(Token::Star) | Some(Token::Slash) | Some(Token::Percent)
+        ) {
             let op = if let Some(token_span) = self.peek() {
                 token_span.token.clone()
             } else {
@@ -738,7 +904,7 @@ impl<'a> Parser<'a> {
         }
         Ok(left)
     }
-    
+
     fn parse_expr_unary(&mut self) -> Result<Expr, String> {
         match self.peek_token() {
             Some(Token::Not) => {
@@ -761,7 +927,7 @@ impl<'a> Parser<'a> {
             _ => self.parse_expr_primary(),
         }
     }
-    
+
     fn parse_expr_primary(&mut self) -> Result<Expr, String> {
         match self.next() {
             Some(token_span) => match &token_span.token {
@@ -773,18 +939,25 @@ impl<'a> Parser<'a> {
                             if let Token::Ident(name) = &token_span.token {
                                 name.clone()
                             } else {
-                                return Err(format!("Expected class name after 'new' at {}:{}", class_name_span.line(), class_name_span.column()));
+                                return Err(format!(
+                                    "Expected class name after 'new' at {}:{}",
+                                    class_name_span.line(),
+                                    class_name_span.column()
+                                ));
                             }
                         }
-                        _ => return Err(format!("Expected class name after 'new' at {}:{}", class_name_span.line(), class_name_span.column())),
+                        _ => {
+                            return Err(format!(
+                                "Expected class name after 'new' at {}:{}",
+                                class_name_span.line(),
+                                class_name_span.column()
+                            ))
+                        }
                     };
                     self.expect(Token::LParen)?;
                     let args = self.parse_comma_list(|p| p.parse_expr())?;
                     self.expect(Token::RParen)?;
-                    Ok(Expr::New {
-                        class_name,
-                        args,
-                    })
+                    Ok(Expr::New { class_name, args })
                 }
                 Token::Integer(n) => Ok(Expr::Integer(*n)),
                 Token::Float(f) => Ok(Expr::Float(*f)),
@@ -796,7 +969,10 @@ impl<'a> Parser<'a> {
                 Token::Ident(name) => {
                     let mut expr = Expr::Ident(name.clone());
                     // Handle postfix operators
-                    while matches!(self.peek_token(), Some(Token::LParen) | Some(Token::LBracket) | Some(Token::Dot)) {
+                    while matches!(
+                        self.peek_token(),
+                        Some(Token::LParen) | Some(Token::LBracket) | Some(Token::Dot)
+                    ) {
                         match self.peek_token() {
                             Some(Token::LParen) => {
                                 self.next();
@@ -817,14 +993,26 @@ impl<'a> Parser<'a> {
                                 self.next();
                                 let field_span = self.current_span();
                                 let field = match self.next() {
-                                    Some(token_span) if matches!(token_span.token, Token::Ident(_)) => {
+                                    Some(token_span)
+                                        if matches!(token_span.token, Token::Ident(_)) =>
+                                    {
                                         if let Token::Ident(name) = &token_span.token {
                                             name.clone()
                                         } else {
-                                            return Err(format!("Expected field name at {}:{}", field_span.line(), field_span.column()));
+                                            return Err(format!(
+                                                "Expected field name at {}:{}",
+                                                field_span.line(),
+                                                field_span.column()
+                                            ));
                                         }
                                     }
-                                    _ => return Err(format!("Expected field name at {}:{}", field_span.line(), field_span.column())),
+                                    _ => {
+                                        return Err(format!(
+                                            "Expected field name at {}:{}",
+                                            field_span.line(),
+                                            field_span.column()
+                                        ))
+                                    }
                                 };
                                 expr = Expr::Member(Box::new(expr), field);
                             }
@@ -846,22 +1034,33 @@ impl<'a> Parser<'a> {
                 }
                 _ => {
                     let span = token_span.span;
-                    Err(format!("Expected expression at {}:{}", span.line(), span.column()))
+                    Err(format!(
+                        "Expected expression at {}:{}",
+                        span.line(),
+                        span.column()
+                    ))
                 }
-            }
+            },
             None => {
                 let span = self.current_span();
-                Err(format!("Expected expression at {}:{}", span.line(), span.column()))
+                Err(format!(
+                    "Expected expression at {}:{}",
+                    span.line(),
+                    span.column()
+                ))
             }
         }
     }
-    
+
     fn parse_comma_list<T, F>(&mut self, mut parse_item: F) -> Result<Vec<T>, String>
     where
         F: FnMut(&mut Self) -> Result<T, String>,
     {
         let mut items = Vec::new();
-        if !matches!(self.peek_token(), Some(Token::RParen) | Some(Token::RBracket) | None) {
+        if !matches!(
+            self.peek_token(),
+            Some(Token::RParen) | Some(Token::RBracket) | None
+        ) {
             items.push(parse_item(self)?);
             while matches!(self.peek_token(), Some(Token::Comma)) {
                 self.next();
@@ -929,7 +1128,10 @@ mod tests {
         let result = parse(source);
         assert!(result.is_ok());
         let program = result.unwrap();
-        assert!(program.items.iter().any(|item| matches!(item, Item::Class(_))));
+        assert!(program
+            .items
+            .iter()
+            .any(|item| matches!(item, Item::Class(_))));
     }
 
     #[test]
@@ -937,7 +1139,10 @@ mod tests {
         let source = "fn test(
     return 42";
         let result = parse(source);
-        assert!(result.is_err(), "Expected parse error for incomplete function");
+        assert!(
+            result.is_err(),
+            "Expected parse error for incomplete function"
+        );
     }
 
     #[test]

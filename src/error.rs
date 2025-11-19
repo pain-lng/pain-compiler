@@ -1,6 +1,6 @@
 // Error formatting with source code context
 
-use crate::span::{Span, PositionTracker};
+use crate::span::{PositionTracker, Span};
 use crate::type_checker::TypeError;
 
 pub struct ErrorFormatter<'a> {
@@ -19,28 +19,29 @@ impl<'a> ErrorFormatter<'a> {
     pub fn format_error(&self, error: &TypeError) -> String {
         match error {
             TypeError::UndefinedVariable { name, span } => {
-                self.format_with_span(
-                    &format!("error: undefined variable `{}`", name),
-                    *span,
-                )
+                self.format_with_span(&format!("error: undefined variable `{}`", name), *span)
             }
-            TypeError::TypeMismatch { expected, found, span } => {
-                self.format_with_span(
-                    &format!(
-                        "error: type mismatch: expected `{}`, found `{}`",
-                        self.format_type(expected),
-                        self.format_type(found)
-                    ),
-                    *span,
-                )
-            }
+            TypeError::TypeMismatch {
+                expected,
+                found,
+                span,
+            } => self.format_with_span(
+                &format!(
+                    "error: type mismatch: expected `{}`, found `{}`",
+                    self.format_type(expected),
+                    self.format_type(found)
+                ),
+                *span,
+            ),
             TypeError::CannotInferType { message, span } => {
-                self.format_with_span(
-                    &format!("error: cannot infer type: {}", message),
-                    *span,
-                )
+                self.format_with_span(&format!("error: cannot infer type: {}", message), *span)
             }
-            TypeError::InvalidOperation { op, left, right, span } => {
+            TypeError::InvalidOperation {
+                op,
+                left,
+                right,
+                span,
+            } => {
                 let right_str = right
                     .as_ref()
                     .map(|t| format!(" and `{}`", self.format_type(t)))
@@ -73,7 +74,10 @@ impl<'a> ErrorFormatter<'a> {
         for (line_num, line_content) in &context_lines {
             // Line number and content
             let line_marker = if *line_num == line { ">" } else { " " };
-            output.push_str(&format!(" {} {} | {}\n", line_marker, line_num, line_content));
+            output.push_str(&format!(
+                " {} {} | {}\n",
+                line_marker, line_num, line_content
+            ));
 
             // Underline the error span on the error line
             if *line_num == line {
@@ -81,13 +85,15 @@ impl<'a> ErrorFormatter<'a> {
                     // Calculate the start column in characters
                     let line_start = self.tracker.line_start(line);
                     let _span_start_in_line = span.start.offset.saturating_sub(line_start);
-                    
+
                     // Count characters up to the span start
-                    let line_text = &self.source[line_start..span.start.offset.min(self.source.len())];
+                    let line_text =
+                        &self.source[line_start..span.start.offset.min(self.source.len())];
                     let char_offset = line_text.chars().count();
-                    
+
                     // Create underline
-                    let underline = " ".repeat(char_offset) + &"^".repeat(snippet.chars().count().max(1));
+                    let underline =
+                        " ".repeat(char_offset) + &"^".repeat(snippet.chars().count().max(1));
                     output.push_str(&format!("     | {}\n", underline));
                 }
             }

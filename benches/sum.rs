@@ -1,9 +1,9 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use pain_compiler::{parse, type_check_program, IrBuilder, CodeGenerator, Optimizer};
+use pain_compiler::{parse, type_check_program, CodeGenerator, IrBuilder, Optimizer};
 
 fn benchmark_sum(c: &mut Criterion) {
     let mut group = c.benchmark_group("sum");
-    
+
     // Benchmark IR generation and optimization
     group.bench_function("ir_gen_n1000", |b| {
         b.iter(|| {
@@ -27,7 +27,7 @@ fn main() -> int:
             black_box(ir)
         })
     });
-    
+
     // Benchmark codegen
     group.bench_function("codegen_n1000", |b| {
         b.iter(|| {
@@ -52,10 +52,9 @@ fn main() -> int:
             black_box(codegen.generate())
         })
     });
-    
+
     group.finish();
 }
 
 criterion_group!(benches, benchmark_sum);
 criterion_main!(benches);
-

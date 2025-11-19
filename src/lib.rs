@@ -1,37 +1,36 @@
 // Pain compiler library
 
-pub mod lexer;
-pub mod parser;
 pub mod ast;
-pub mod type_checker;
+pub mod codegen;
+pub mod doc_generator;
+pub mod error;
+pub mod formatter;
 pub mod interpreter;
 pub mod ir;
 pub mod ir_builder;
-pub mod codegen;
-pub mod mlir_codegen;
+pub mod lexer;
 pub mod llvm_tools;
-pub mod formatter;
-pub mod span;
-pub mod error;
-pub mod stdlib;
-pub mod doc_generator;
+pub mod mlir_codegen;
 pub mod optimizations;
+pub mod parser;
+pub mod span;
+pub mod stdlib;
+pub mod type_checker;
 
-pub use lexer::Token;
-pub use parser::parse;
-pub use type_checker::{type_check_program, TypeError, TypeResult};
+pub use codegen::CodeGenerator;
+pub use doc_generator::DocGenerator;
+pub use error::ErrorFormatter;
+pub use formatter::Formatter;
 pub use interpreter::Interpreter;
 pub use ir::IrProgram;
 pub use ir_builder::IrBuilder;
-pub use codegen::CodeGenerator;
+pub use lexer::Token;
 pub use mlir_codegen::MlirCodeGenerator;
-pub use formatter::Formatter;
-pub use span::{Span, Position, PositionTracker};
-pub use error::ErrorFormatter;
-pub use stdlib::{get_stdlib_functions, is_stdlib_function, get_stdlib_return_type};
-pub use doc_generator::DocGenerator;
 pub use optimizations::Optimizer;
+pub use parser::parse;
+pub use span::{Position, PositionTracker, Span};
+pub use stdlib::{get_stdlib_functions, get_stdlib_return_type, is_stdlib_function};
+pub use type_checker::{type_check_program, TypeError, TypeResult};
 
 // Re-export AST types for LSP and other tools
 pub use ast::*;
-

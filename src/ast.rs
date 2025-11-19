@@ -68,7 +68,7 @@ pub enum Type {
     Array(Box<Type>),
     Map(Box<Type>, Box<Type>),
     Tensor(Box<Type>, Vec<Expr>), // Tensor[f32, (N, M)]
-    Named(String), // User-defined types
+    Named(String),                // User-defined types
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -109,10 +109,10 @@ pub enum Expr {
     Bool(bool),
     None,
     List(Vec<Expr>), // List literal: [1, 2, 3]
-    
+
     // Variables
     Ident(String),
-    
+
     // Binary operations
     Add(Box<Expr>, Box<Expr>),
     Sub(Box<Expr>, Box<Expr>),
@@ -127,36 +127,30 @@ pub enum Expr {
     Ge(Box<Expr>, Box<Expr>),
     And(Box<Expr>, Box<Expr>),
     Or(Box<Expr>, Box<Expr>),
-    
+
     // Unary operations
     Not(Box<Expr>),
     Neg(Box<Expr>),
-    
+
     // Assignment
     Assign(Box<Expr>, Box<Expr>),
     AddAssign(Box<Expr>, Box<Expr>),
     SubAssign(Box<Expr>, Box<Expr>),
     MulAssign(Box<Expr>, Box<Expr>),
     DivAssign(Box<Expr>, Box<Expr>),
-    
+
     // Function call
-    Call {
-        callee: Box<Expr>,
-        args: Vec<Expr>,
-    },
-    
+    Call { callee: Box<Expr>, args: Vec<Expr> },
+
     // Indexing
     Index(Box<Expr>, Box<Expr>),
-    
+
     // Member access
     Member(Box<Expr>, String),
-    
+
     // Type checking
     IsInstance(Box<Expr>, Type),
-    
+
     // Object creation
-    New {
-        class_name: String,
-        args: Vec<Expr>,
-    },
+    New { class_name: String, args: Vec<Expr> },
 }

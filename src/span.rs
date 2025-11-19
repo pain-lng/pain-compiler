@@ -15,7 +15,11 @@ pub struct Position {
 
 impl Position {
     pub fn new(line: usize, column: usize, offset: usize) -> Self {
-        Self { line, column, offset }
+        Self {
+            line,
+            column,
+            offset,
+        }
     }
 
     pub fn start() -> Self {
@@ -99,7 +103,7 @@ impl PositionTracker {
         // Find which line this offset is on
         let mut line = 1;
         let mut line_start = 0;
-        
+
         for (i, &line_offset) in self.lines.iter().enumerate() {
             if line_offset > offset {
                 break;
@@ -119,7 +123,7 @@ impl PositionTracker {
         } else {
             ""
         };
-        
+
         let column = line_text.chars().count() + 1; // 1-based
 
         Position::new(line, column, offset)

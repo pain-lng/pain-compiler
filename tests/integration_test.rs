@@ -21,12 +21,12 @@ fn compile_and_optimize(source: &str) -> Result<IrProgram, String> {
 fn test_parse_simple_function() {
     let source = "fn add(a: int, b: int) -> int:
     return a + b";
-    
+
     let result = parse(source);
     assert!(result.is_ok(), "Failed to parse: {:?}", result.err());
     let program = result.unwrap();
     assert_eq!(program.items.len(), 1);
-    
+
     if let Item::Function(func) = &program.items[0] {
         assert_eq!(func.name, "add");
         assert_eq!(func.params.len(), 2);
@@ -41,7 +41,7 @@ fn test_parse_with_indentation() {
     let x = 10
     let y = 20
     return x + y";
-    
+
     let result = parse(source);
     assert!(result.is_ok(), "Failed to parse: {:?}", result.err());
 }
@@ -53,7 +53,7 @@ fn test_parse_if_statement() {
         return a
     else:
         return b";
-    
+
     let result = parse(source);
     assert!(result.is_ok(), "Failed to parse: {:?}", result.err());
 }
@@ -64,7 +64,7 @@ fn test_parse_while_loop() {
     while n > 0:
         print(n)
         n = n - 1";
-    
+
     let result = parse(source);
     assert!(result.is_ok(), "Failed to parse: {:?}", result.err());
 }
@@ -76,7 +76,7 @@ fn test_parse_for_loop() {
     for item in items:
         total = total + item
     return total";
-    
+
     let result = parse(source);
     assert!(result.is_ok(), "Failed to parse: {:?}", result.err());
 }
@@ -89,18 +89,21 @@ fn test_parse_class() {
     
     fn new(x: int, y: int) -> Point:
         return new Point(x, y)";
-    
+
     let result = parse(source);
     assert!(result.is_ok(), "Failed to parse: {:?}", result.err());
     let program = result.unwrap();
-    assert!(program.items.iter().any(|item| matches!(item, Item::Class(_))));
+    assert!(program
+        .items
+        .iter()
+        .any(|item| matches!(item, Item::Class(_))));
 }
 
 #[test]
 fn test_parse_list_literal() {
     let source = "fn get_numbers() -> list[int]:
     return [1, 2, 3, 4, 5]";
-    
+
     let result = parse(source);
     assert!(result.is_ok(), "Failed to parse: {:?}", result.err());
 }
@@ -109,7 +112,7 @@ fn test_parse_list_literal() {
 fn test_type_check_simple_function() {
     let source = "fn add(a: int, b: int) -> int:
     return a + b";
-    
+
     let program = parse(source).unwrap();
     let result = type_check_program(&program);
     assert!(result.is_ok(), "Type check failed: {:?}", result.err());
@@ -119,7 +122,7 @@ fn test_type_check_simple_function() {
 fn test_type_check_type_mismatch() {
     let source = "fn test():
     let x: int = \"hello\"";
-    
+
     let program = parse(source).unwrap();
     let result = type_check_program(&program);
     assert!(result.is_err(), "Expected type error");
@@ -129,17 +132,20 @@ fn test_type_check_type_mismatch() {
 fn test_type_check_undefined_variable() {
     let source = "fn test():
     return undefined_var";
-    
+
     let program = parse(source).unwrap();
     let result = type_check_program(&program);
-    assert!(result.is_err(), "Expected type error for undefined variable");
+    assert!(
+        result.is_err(),
+        "Expected type error for undefined variable"
+    );
 }
 
 #[test]
 fn test_ir_build_simple_function() {
     let source = "fn add(a: int, b: int) -> int:
     return a + b";
-    
+
     let result = compile_pipeline(source);
     assert!(result.is_ok(), "IR build failed: {:?}", result.err());
     let ir = result.unwrap();
@@ -153,7 +159,7 @@ fn test_ir_build_with_control_flow() {
         return -x
     else:
         return x";
-    
+
     let result = compile_pipeline(source);
     assert!(result.is_ok(), "IR build failed: {:?}", result.err());
     let ir = result.unwrap();
@@ -171,7 +177,7 @@ fn test_ir_build_while_loop() {
         result = result * i
         i = i + 1
     return result";
-    
+
     let result = compile_pipeline(source);
     assert!(result.is_ok(), "IR build failed: {:?}", result.err());
     let ir = result.unwrap();
@@ -184,10 +190,10 @@ fn test_ir_build_while_loop() {
 fn test_optimization_constant_folding() {
     let source = "fn test() -> int:
     return 2 + 3";
-    
+
     let ir = compile_pipeline(source).unwrap();
     let optimized = Optimizer::optimize(ir);
-    
+
     // After constant folding, the addition should be folded to a constant
     // This is a basic check - in practice, we'd verify the IR structure
     assert!(!optimized.functions.is_empty());
@@ -199,10 +205,10 @@ fn test_optimization_dead_code_elimination() {
     let unused = 10
     let used = 5
     return used";
-    
+
     let ir = compile_pipeline(source).unwrap();
     let optimized = Optimizer::optimize(ir);
-    
+
     // Dead code elimination should remove unused variable
     // This is a basic check - in practice, we'd verify the IR structure
     assert!(!optimized.functions.is_empty());
@@ -214,7 +220,7 @@ fn test_full_pipeline_with_stdlib() {
     let x = 10
     let y = 20
     print(x + y)";
-    
+
     let result = compile_and_optimize(source);
     assert!(result.is_ok(), "Full pipeline failed: {:?}", result.err());
 }
@@ -223,36 +229,52 @@ fn test_full_pipeline_with_stdlib() {
 fn test_parse_f_string() {
     let source = "fn greet(name: str) -> str:
     return f\"Hello, {name}!\"";
-    
+
     let result = parse(source);
-    assert!(result.is_ok(), "Failed to parse f-string: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Failed to parse f-string: {:?}",
+        result.err()
+    );
 }
 
 #[test]
 fn test_parse_indexing() {
     let source = "fn get_first(items: list[int]) -> int:
     return items[0]";
-    
+
     let result = parse(source);
-    assert!(result.is_ok(), "Failed to parse indexing: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Failed to parse indexing: {:?}",
+        result.err()
+    );
 }
 
 #[test]
 fn test_parse_member_access() {
     let source = "fn get_x(p: Point) -> int:
     return p.x";
-    
+
     let result = parse(source);
-    assert!(result.is_ok(), "Failed to parse member access: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Failed to parse member access: {:?}",
+        result.err()
+    );
 }
 
 #[test]
 fn test_parse_isinstance() {
     let source = "fn check_type(obj: dynamic) -> bool:
     return isinstance(obj, Point)";
-    
+
     let result = parse(source);
-    assert!(result.is_ok(), "Failed to parse isinstance: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Failed to parse isinstance: {:?}",
+        result.err()
+    );
 }
 
 #[test]
@@ -265,9 +287,13 @@ fn test_parse_nested_blocks() {
             return 2
     else:
         return 3";
-    
+
     let result = parse(source);
-    assert!(result.is_ok(), "Failed to parse nested blocks: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Failed to parse nested blocks: {:?}",
+        result.err()
+    );
 }
 
 #[test]
@@ -278,16 +304,20 @@ fn test_parse_break_continue() {
             break
         if True:
             continue";
-    
+
     let result = parse(source);
-    assert!(result.is_ok(), "Failed to parse break/continue: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Failed to parse break/continue: {:?}",
+        result.err()
+    );
 }
 
 #[test]
 fn test_type_check_binary_operations() {
     let source = "fn test(a: int, b: int) -> bool:
     return a == b";
-    
+
     let program = parse(source).unwrap();
     let result = type_check_program(&program);
     assert!(result.is_ok(), "Type check failed: {:?}", result.err());
@@ -297,7 +327,7 @@ fn test_type_check_binary_operations() {
 fn test_type_check_list_operations() {
     let source = "fn test(items: list[int]) -> int:
     return len(items)";
-    
+
     let program = parse(source).unwrap();
     let result = type_check_program(&program);
     assert!(result.is_ok(), "Type check failed: {:?}", result.err());
@@ -311,7 +341,7 @@ fn test_ir_build_function_call() {
 fn main():
     let result = add(5, 3)
     return result";
-    
+
     let result = compile_pipeline(source);
     assert!(result.is_ok(), "IR build failed: {:?}", result.err());
     let ir = result.unwrap();
@@ -326,7 +356,7 @@ fn test_ir_build_class_instantiation() {
 
 fn create_point() -> Point:
     return new Point(10, 20)";
-    
+
     let result = compile_pipeline(source);
     assert!(result.is_ok(), "IR build failed: {:?}", result.err());
 }
@@ -335,11 +365,11 @@ fn create_point() -> Point:
 fn test_error_messages_have_spans() {
     let source = "fn test():
     let x = undefined_var";
-    
+
     let program = parse(source).unwrap();
     let result = type_check_program(&program);
     assert!(result.is_err());
-    
+
     if let Err(TypeError::UndefinedVariable { span, .. }) = result {
         // Verify span has valid line/column
         assert!(span.line() > 0);
@@ -359,10 +389,10 @@ fn test_optimization_loop_invariant() {
         sum = sum + constant
         i = i + 1
     return sum";
-    
+
     let ir = compile_pipeline(source).unwrap();
     let optimized = Optimizer::optimize(ir);
-    
+
     // Loop invariant code motion should move constant calculations out of loop
     assert!(!optimized.functions.is_empty());
 }
@@ -372,9 +402,13 @@ fn test_parse_attributes() {
     let source = "@inline
 fn helper(x: int) -> int:
     return x * 2";
-    
+
     let result = parse(source);
-    assert!(result.is_ok(), "Failed to parse attributes: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Failed to parse attributes: {:?}",
+        result.err()
+    );
     let program = result.unwrap();
     if let Item::Function(func) = &program.items[0] {
         assert!(!func.attrs.is_empty());
@@ -386,9 +420,13 @@ fn test_parse_doc_comments() {
     let source = "\"\"\"This is a doc comment.\"\"\"
 fn documented():
     return 42";
-    
+
     let result = parse(source);
-    assert!(result.is_ok(), "Failed to parse doc comment: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Failed to parse doc comment: {:?}",
+        result.err()
+    );
     let program = result.unwrap();
     if let Item::Function(func) = &program.items[0] {
         assert!(func.doc.is_some());
@@ -400,7 +438,7 @@ fn documented():
 fn test_type_check_return_type() {
     let source = "fn get_int() -> int:
     return 42";
-    
+
     let program = parse(source).unwrap();
     let result = type_check_program(&program);
     assert!(result.is_ok(), "Type check failed: {:?}", result.err());
@@ -410,7 +448,7 @@ fn test_type_check_return_type() {
 fn test_type_check_void_function() {
     let source = "fn print_hello():
     print(\"hello\")";
-    
+
     let program = parse(source).unwrap();
     let result = type_check_program(&program);
     assert!(result.is_ok(), "Type check failed: {:?}", result.err());
@@ -428,7 +466,7 @@ fn main():
     let x = add(2, 3)
     let y = multiply(x, 4)
     return y";
-    
+
     let result = compile_pipeline(source);
     assert!(result.is_ok(), "IR build failed: {:?}", result.err());
     let ir = result.unwrap();
@@ -439,27 +477,39 @@ fn main():
 fn test_parse_complex_expression() {
     let source = "fn test(a: int, b: int, c: int) -> int:
     return (a + b) * c - (a / b)";
-    
+
     let result = parse(source);
-    assert!(result.is_ok(), "Failed to parse complex expression: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Failed to parse complex expression: {:?}",
+        result.err()
+    );
 }
 
 #[test]
 fn test_parse_logical_operators() {
     let source = "fn test(a: bool, b: bool) -> bool:
     return a && b || !a";
-    
+
     let result = parse(source);
-    assert!(result.is_ok(), "Failed to parse logical operators: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Failed to parse logical operators: {:?}",
+        result.err()
+    );
 }
 
 #[test]
 fn test_parse_comparison_operators() {
     let source = "fn test(a: int, b: int) -> bool:
     return a < b && a != b && a <= b";
-    
+
     let result = parse(source);
-    assert!(result.is_ok(), "Failed to parse comparison operators: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Failed to parse comparison operators: {:?}",
+        result.err()
+    );
 }
 
 #[test]
@@ -471,9 +521,13 @@ fn test_parse_assignment_operators() {
     x *= 3
     x /= 2
     return x";
-    
+
     let result = parse(source);
-    assert!(result.is_ok(), "Failed to parse assignment operators: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Failed to parse assignment operators: {:?}",
+        result.err()
+    );
 }
 
 #[test]
@@ -483,27 +537,39 @@ fn test_parse_nested_function_calls() {
 
 fn test():
     return add(add(1, 2), add(3, 4))";
-    
+
     let result = parse(source);
-    assert!(result.is_ok(), "Failed to parse nested calls: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Failed to parse nested calls: {:?}",
+        result.err()
+    );
 }
 
 #[test]
 fn test_parse_empty_list() {
     let source = "fn test() -> list[int]:
     return []";
-    
+
     let result = parse(source);
-    assert!(result.is_ok(), "Failed to parse empty list: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Failed to parse empty list: {:?}",
+        result.err()
+    );
 }
 
 #[test]
 fn test_parse_list_with_expressions() {
     let source = "fn test(a: int, b: int) -> list[int]:
     return [a, b, a + b, a * b]";
-    
+
     let result = parse(source);
-    assert!(result.is_ok(), "Failed to parse list with expressions: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Failed to parse list with expressions: {:?}",
+        result.err()
+    );
 }
 
 #[test]
@@ -514,7 +580,7 @@ fn test_type_check_function_call() {
 fn test():
     let result = add(5, 3)
     return result";
-    
+
     let program = parse(source).unwrap();
     let result = type_check_program(&program);
     assert!(result.is_ok(), "Type check failed: {:?}", result.err());
@@ -528,7 +594,7 @@ fn test_ir_build_phi_nodes() {
     else:
         let y = 20
     return y";
-    
+
     let result = compile_pipeline(source);
     assert!(result.is_ok(), "IR build failed: {:?}", result.err());
     // Should have phi nodes for merging y values from different branches
@@ -540,10 +606,10 @@ fn test_optimization_common_subexpression() {
     let x = a + b
     let y = a + b
     return x + y";
-    
+
     let ir = compile_pipeline(source).unwrap();
     let optimized = Optimizer::optimize(ir);
-    
+
     // CSE should eliminate duplicate a + b computation
     assert!(!optimized.functions.is_empty());
 }
@@ -555,9 +621,13 @@ fn test_parse_type_annotations() {
     let y: float64 = 3.14
     let z: bool = True
     return x";
-    
+
     let result = parse(source);
-    assert!(result.is_ok(), "Failed to parse type annotations: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Failed to parse type annotations: {:?}",
+        result.err()
+    );
 }
 
 #[test]
@@ -567,9 +637,13 @@ fn test_parse_type_inference() {
     let y = 3.14
     let z = True
     return x";
-    
+
     let result = parse(source);
-    assert!(result.is_ok(), "Failed to parse type inference: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Failed to parse type inference: {:?}",
+        result.err()
+    );
 }
 
 #[test]
@@ -583,9 +657,13 @@ fn test_parse_complex_nested_structure() {
                 return y
         x = x + 1
     return -1";
-    
+
     let result = parse(source);
-    assert!(result.is_ok(), "Failed to parse complex nested structure: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Failed to parse complex nested structure: {:?}",
+        result.err()
+    );
 }
 
 #[test]
@@ -595,7 +673,7 @@ fn test_full_pipeline_fibonacci() {
         return n
     else:
         return fib(n - 1) + fib(n - 2)";
-    
+
     let result = compile_and_optimize(source);
     assert!(result.is_ok(), "Full pipeline failed: {:?}", result.err());
 }
@@ -607,7 +685,7 @@ fn test_full_pipeline_factorial() {
         return 1
     else:
         return n * factorial(n - 1)";
-    
+
     let result = compile_and_optimize(source);
     assert!(result.is_ok(), "Full pipeline failed: {:?}", result.err());
 }
@@ -617,61 +695,85 @@ fn test_parse_string_operations() {
     let source = "fn test(s: str) -> str:
     let len = len(s)
     return s";
-    
+
     let result = parse(source);
-    assert!(result.is_ok(), "Failed to parse string operations: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Failed to parse string operations: {:?}",
+        result.err()
+    );
 }
 
 #[test]
 fn test_parse_array_indexing() {
     let source = "fn test(arr: array[int], idx: int) -> int:
     return arr[idx]";
-    
+
     let result = parse(source);
-    assert!(result.is_ok(), "Failed to parse array indexing: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Failed to parse array indexing: {:?}",
+        result.err()
+    );
 }
 
 #[test]
 fn test_parse_chained_member_access() {
     let source = "fn test(p: Point) -> int:
     return p.x";
-    
+
     let result = parse(source);
-    assert!(result.is_ok(), "Failed to parse chained member access: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Failed to parse chained member access: {:?}",
+        result.err()
+    );
 }
 
 #[test]
 fn test_parse_unary_operators() {
     let source = "fn test(x: int) -> int:
     return -x";
-    
+
     let result = parse(source);
-    assert!(result.is_ok(), "Failed to parse unary operators: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Failed to parse unary operators: {:?}",
+        result.err()
+    );
 }
 
 #[test]
 fn test_parse_boolean_literals() {
     let source = "fn test() -> bool:
     return True && False || !True";
-    
+
     let result = parse(source);
-    assert!(result.is_ok(), "Failed to parse boolean literals: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Failed to parse boolean literals: {:?}",
+        result.err()
+    );
 }
 
 #[test]
 fn test_parse_none_literal() {
     let source = "fn test() -> dynamic:
     return None";
-    
+
     let result = parse(source);
-    assert!(result.is_ok(), "Failed to parse None literal: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Failed to parse None literal: {:?}",
+        result.err()
+    );
 }
 
 #[test]
 fn test_type_check_arithmetic_operations() {
     let source = "fn test(a: int, b: int) -> int:
     return a + b - a * b / a % b";
-    
+
     let program = parse(source).unwrap();
     let result = type_check_program(&program);
     assert!(result.is_ok(), "Type check failed: {:?}", result.err());
@@ -681,7 +783,7 @@ fn test_type_check_arithmetic_operations() {
 fn test_ir_build_with_parameters() {
     let source = "fn test(a: int, b: int, c: int) -> int:
     return a + b + c";
-    
+
     let result = compile_pipeline(source);
     assert!(result.is_ok(), "IR build failed: {:?}", result.err());
     let ir = result.unwrap();
@@ -696,10 +798,10 @@ fn test_optimization_tail_call_with_entrypoint() {
         return acc
     else:
         return helper(n - 1, acc + n)";
-    
+
     let ir = compile_pipeline(source).unwrap();
     let optimized = Optimizer::optimize(ir);
-    
+
     // Tail call optimization should mark tail calls
     assert!(!optimized.functions.is_empty());
 }
@@ -709,7 +811,7 @@ fn test_parse_error_recovery() {
     // Test that parser provides good error messages
     let source = "fn test(
     return 42";
-    
+
     let result = parse(source);
     assert!(result.is_err(), "Expected parse error");
     let error = result.unwrap_err();
@@ -721,12 +823,15 @@ fn test_type_check_error_recovery() {
     // Test that type checker provides good error messages
     let source = "fn test():
     let x: int = \"not an int\"";
-    
+
     let program = parse(source).unwrap();
     let result = type_check_program(&program);
     assert!(result.is_err(), "Expected type error");
-    
-    if let Err(TypeError::TypeMismatch { expected, found, .. }) = result {
+
+    if let Err(TypeError::TypeMismatch {
+        expected, found, ..
+    }) = result
+    {
         assert_eq!(expected, Type::Int);
         assert_eq!(found, Type::Str);
     } else {
@@ -737,7 +842,7 @@ fn test_type_check_error_recovery() {
 #[test]
 fn test_ir_build_empty_function() {
     let source = "fn empty(): pass";
-    
+
     let result = compile_pipeline(source);
     // Empty function should still compile
     assert!(result.is_ok() || result.is_err()); // May or may not be supported
@@ -749,7 +854,7 @@ fn test_parse_multiline_string() {
     return \"line1
 line2
 line3\"";
-    
+
     let result = parse(source);
     // Multiline strings may or may not be supported
     assert!(result.is_ok() || result.is_err());
@@ -764,7 +869,7 @@ fn test_full_pipeline_sum() {
         total = total + i
         i = i + 1
     return total";
-    
+
     let result = compile_and_optimize(source);
     assert!(result.is_ok(), "Full pipeline failed: {:?}", result.err());
 }
@@ -779,9 +884,13 @@ fn test_parse_class_with_methods() {
     
     fn get() -> int:
         return self.value";
-    
+
     let result = parse(source);
-    assert!(result.is_ok(), "Failed to parse class with methods: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Failed to parse class with methods: {:?}",
+        result.err()
+    );
     let program = result.unwrap();
     if let Item::Class(class) = &program.items[0] {
         assert!(!class.methods.is_empty());
@@ -794,9 +903,13 @@ fn test_parse_class_with_fields() {
     let name: str
     let age: int
     let active: bool";
-    
+
     let result = parse(source);
-    assert!(result.is_ok(), "Failed to parse class with fields: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Failed to parse class with fields: {:?}",
+        result.err()
+    );
     let program = result.unwrap();
     if let Item::Class(class) = &program.items[0] {
         assert_eq!(class.fields.len(), 3);
@@ -811,7 +924,7 @@ fn test_ir_build_class_methods() {
     
     fn distance() -> float64:
         return 0.0";
-    
+
     let result = compile_pipeline(source);
     assert!(result.is_ok(), "IR build failed: {:?}", result.err());
     let ir = result.unwrap();
@@ -823,16 +936,20 @@ fn test_ir_build_class_methods() {
 fn test_parse_complex_type() {
     let source = "fn test() -> list[list[int]]:
     return [[1, 2], [3, 4]]";
-    
+
     let result = parse(source);
-    assert!(result.is_ok(), "Failed to parse complex type: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Failed to parse complex type: {:?}",
+        result.err()
+    );
 }
 
 #[test]
 fn test_parse_map_type() {
     let source = "fn test() -> map[str, int]:
     return {}";
-    
+
     let result = parse(source);
     // Map type may or may not be fully supported
     assert!(result.is_ok() || result.is_err());
@@ -845,10 +962,10 @@ fn test_optimization_preserves_semantics() {
     let x = a + b
     let y = a + b
     return x + y";
-    
+
     let ir1 = compile_pipeline(source).unwrap();
     let ir2 = Optimizer::optimize(ir1.clone());
-    
+
     // Both should have functions
     assert!(!ir1.functions.is_empty());
     assert!(!ir2.functions.is_empty());
@@ -858,9 +975,13 @@ fn test_optimization_preserves_semantics() {
 fn test_parse_operator_precedence() {
     let source = "fn test(a: int, b: int, c: int) -> int:
     return a + b * c";
-    
+
     let result = parse(source);
-    assert!(result.is_ok(), "Failed to parse operator precedence: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Failed to parse operator precedence: {:?}",
+        result.err()
+    );
     // Should parse as a + (b * c), not (a + b) * c
 }
 
@@ -868,9 +989,13 @@ fn test_parse_operator_precedence() {
 fn test_parse_parenthesized_expression() {
     let source = "fn test(a: int, b: int, c: int) -> int:
     return (a + b) * c";
-    
+
     let result = parse(source);
-    assert!(result.is_ok(), "Failed to parse parenthesized expression: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Failed to parse parenthesized expression: {:?}",
+        result.err()
+    );
 }
 
 #[test]
@@ -878,27 +1003,34 @@ fn test_type_check_condition_must_be_bool() {
     let source = "fn test(x: int):
     if x:
         return 1";
-    
+
     let program = parse(source).unwrap();
     let result = type_check_program(&program);
     // Should error because condition must be bool
-    assert!(result.is_err(), "Expected type error for non-bool condition");
+    assert!(
+        result.is_err(),
+        "Expected type error for non-bool condition"
+    );
 }
 
 #[test]
 fn test_parse_float_literals() {
     let source = "fn test() -> float64:
     return 3.14";
-    
+
     let result = parse(source);
-    assert!(result.is_ok(), "Failed to parse float literal: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Failed to parse float literal: {:?}",
+        result.err()
+    );
 }
 
 #[test]
 fn test_parse_scientific_notation() {
     let source = "fn test() -> float64:
     return 1.5e10";
-    
+
     let result = parse(source);
     // Scientific notation may or may not be supported
     assert!(result.is_ok() || result.is_err());
@@ -908,7 +1040,7 @@ fn test_parse_scientific_notation() {
 fn test_full_pipeline_hello_world() {
     let source = "fn main():
     print(\"Hello, World!\")";
-    
+
     let result = compile_and_optimize(source);
     assert!(result.is_ok(), "Full pipeline failed: {:?}", result.err());
 }
@@ -919,17 +1051,25 @@ fn test_parse_comments() {
 fn test() -> int:
     # Another comment
     return 42  # Inline comment";
-    
+
     let result = parse(source);
-    assert!(result.is_ok(), "Failed to parse with comments: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Failed to parse with comments: {:?}",
+        result.err()
+    );
 }
 
 #[test]
 fn test_parse_empty_program() {
     let source = "";
-    
+
     let result = parse(source);
-    assert!(result.is_ok(), "Failed to parse empty program: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Failed to parse empty program: {:?}",
+        result.err()
+    );
     let program = result.unwrap();
     assert_eq!(program.items.len(), 0);
 }
@@ -944,9 +1084,13 @@ fn func2():
 
 class MyClass:
     let x: int";
-    
+
     let result = parse(source);
-    assert!(result.is_ok(), "Failed to parse multiple items: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Failed to parse multiple items: {:?}",
+        result.err()
+    );
     let program = result.unwrap();
     assert_eq!(program.items.len(), 3);
 }
@@ -955,7 +1099,7 @@ class MyClass:
 fn test_ir_build_with_stdlib_calls() {
     let source = "fn test(s: str) -> int:
     return len(s)";
-    
+
     let result = compile_pipeline(source);
     assert!(result.is_ok(), "IR build failed: {:?}", result.err());
 }
@@ -967,10 +1111,10 @@ fn test_optimization_removes_unused_code() {
     let unused2 = 20
     let used = 5
     return used";
-    
+
     let ir = compile_pipeline(source).unwrap();
     let optimized = Optimizer::optimize(ir);
-    
+
     // Dead code elimination should remove unused variables
     assert!(!optimized.functions.is_empty());
 }
@@ -979,16 +1123,20 @@ fn test_optimization_removes_unused_code() {
 fn test_parse_negative_numbers() {
     let source = "fn test() -> int:
     return -42";
-    
+
     let result = parse(source);
-    assert!(result.is_ok(), "Failed to parse negative number: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Failed to parse negative number: {:?}",
+        result.err()
+    );
 }
 
 #[test]
 fn test_parse_zero() {
     let source = "fn test() -> int:
     return 0";
-    
+
     let result = parse(source);
     assert!(result.is_ok(), "Failed to parse zero: {:?}", result.err());
 }
@@ -1000,7 +1148,7 @@ fn test_type_check_list_type() {
         return items[0]
     else:
         return 0";
-    
+
     let program = parse(source).unwrap();
     let result = type_check_program(&program);
     assert!(result.is_ok(), "Type check failed: {:?}", result.err());
@@ -1012,7 +1160,7 @@ fn test_ir_build_conditional_return() {
     if x > 0:
         return 1
     return 0";
-    
+
     let result = compile_pipeline(source);
     assert!(result.is_ok(), "IR build failed: {:?}", result.err());
 }
@@ -1025,9 +1173,13 @@ fn test_parse_ternary_like_pattern() {
         return 1
     else:
         return 0";
-    
+
     let result = parse(source);
-    assert!(result.is_ok(), "Failed to parse conditional return: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Failed to parse conditional return: {:?}",
+        result.err()
+    );
 }
 
 #[test]
@@ -1039,7 +1191,7 @@ fn test_full_pipeline_with_loops_range() {
         total = total + i
         i = i + 1
     return total";
-    
+
     let result = compile_and_optimize(source);
     assert!(result.is_ok(), "Full pipeline failed: {:?}", result.err());
 }
@@ -1048,18 +1200,26 @@ fn test_full_pipeline_with_loops_range() {
 fn test_parse_string_concatenation() {
     let source = "fn test(a: str, b: str) -> str:
     return a + b";
-    
+
     let result = parse(source);
-    assert!(result.is_ok(), "Failed to parse string concatenation: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Failed to parse string concatenation: {:?}",
+        result.err()
+    );
 }
 
 #[test]
 fn test_parse_escaped_strings() {
     let source = "fn test() -> str:
     return \"Hello\\nWorld\"";
-    
+
     let result = parse(source);
-    assert!(result.is_ok(), "Failed to parse escaped string: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Failed to parse escaped string: {:?}",
+        result.err()
+    );
 }
 
 #[test]
@@ -1071,7 +1231,7 @@ fn test_ir_build_with_phi_for_loops() {
         sum = sum + i
         i = i + 1
     return sum";
-    
+
     let result = compile_pipeline(source);
     assert!(result.is_ok(), "IR build failed: {:?}", result.err());
     // Should have phi nodes for loop variables
@@ -1087,10 +1247,10 @@ fn test_optimization_handles_loops() {
         sum = sum + constant
         i = i + 1
     return sum";
-    
+
     let ir = compile_pipeline(source).unwrap();
     let optimized = Optimizer::optimize(ir);
-    
+
     // Loop invariant code motion should optimize this
     assert!(!optimized.functions.is_empty());
 }
@@ -1099,11 +1259,11 @@ fn test_optimization_handles_loops() {
 fn test_parse_error_has_location() {
     let source = "fn test():
     let x = undefined";
-    
+
     let program = parse(source).unwrap();
     let result = type_check_program(&program);
     assert!(result.is_err());
-    
+
     if let Err(TypeError::UndefinedVariable { span, .. }) = result {
         // Verify error has location information
         assert!(span.line() > 0);
@@ -1129,7 +1289,7 @@ fn main():
     let n = 5
     let fact = factorial(n)
     print(fact)";
-    
+
     let result = compile_and_optimize(source);
     assert!(result.is_ok(), "Full pipeline failed: {:?}", result.err());
 }
@@ -1142,39 +1302,57 @@ fn main():
 fn test_codegen_simple_function() {
     let source = "fn add(a: int, b: int) -> int:
     return a + b";
-    
+
     let ir = compile_pipeline(source).unwrap();
     let llvm_ir = CodeGenerator::new(ir).generate();
-    
+
     // Check that LLVM IR contains function definition
-    assert!(llvm_ir.contains("define"), "LLVM IR should contain function definition");
-    assert!(llvm_ir.contains("@add"), "LLVM IR should contain function name");
-    assert!(llvm_ir.contains("i64"), "LLVM IR should contain integer type");
+    assert!(
+        llvm_ir.contains("define"),
+        "LLVM IR should contain function definition"
+    );
+    assert!(
+        llvm_ir.contains("@add"),
+        "LLVM IR should contain function name"
+    );
+    assert!(
+        llvm_ir.contains("i64"),
+        "LLVM IR should contain integer type"
+    );
 }
 
 #[test]
 fn test_codegen_with_constants() {
     let source = "fn test() -> int:
     return 42";
-    
+
     let ir = compile_pipeline(source).unwrap();
     let llvm_ir = CodeGenerator::new(ir).generate();
-    
+
     // Check that constant is generated
-    assert!(llvm_ir.contains("42"), "LLVM IR should contain constant value");
+    assert!(
+        llvm_ir.contains("42"),
+        "LLVM IR should contain constant value"
+    );
 }
 
 #[test]
 fn test_codegen_arithmetic_operations() {
     let source = "fn test(a: int, b: int) -> int:
     return a + b * 2";
-    
+
     let ir = compile_pipeline(source).unwrap();
     let llvm_ir = CodeGenerator::new(ir).generate();
-    
+
     // Check that arithmetic operations are generated
-    assert!(llvm_ir.contains("add"), "LLVM IR should contain add operation");
-    assert!(llvm_ir.contains("mul"), "LLVM IR should contain mul operation");
+    assert!(
+        llvm_ir.contains("add"),
+        "LLVM IR should contain add operation"
+    );
+    assert!(
+        llvm_ir.contains("mul"),
+        "LLVM IR should contain mul operation"
+    );
 }
 
 #[test]
@@ -1184,13 +1362,19 @@ fn test_codegen_control_flow() {
         return 1
     else:
         return 0";
-    
+
     let ir = compile_pipeline(source).unwrap();
     let llvm_ir = CodeGenerator::new(ir).generate();
-    
+
     // Check that control flow is generated
-    assert!(llvm_ir.contains("br"), "LLVM IR should contain branch instruction");
-    assert!(llvm_ir.contains("icmp"), "LLVM IR should contain comparison");
+    assert!(
+        llvm_ir.contains("br"),
+        "LLVM IR should contain branch instruction"
+    );
+    assert!(
+        llvm_ir.contains("icmp"),
+        "LLVM IR should contain comparison"
+    );
 }
 
 #[test]
@@ -1200,26 +1384,38 @@ fn test_codegen_function_calls() {
 
 fn main() -> int:
     return helper(5)";
-    
+
     let ir = compile_pipeline(source).unwrap();
     let llvm_ir = CodeGenerator::new(ir).generate();
-    
+
     // Check that function calls are generated
-    assert!(llvm_ir.contains("call"), "LLVM IR should contain call instruction");
-    assert!(llvm_ir.contains("@helper"), "LLVM IR should contain helper function call");
+    assert!(
+        llvm_ir.contains("call"),
+        "LLVM IR should contain call instruction"
+    );
+    assert!(
+        llvm_ir.contains("@helper"),
+        "LLVM IR should contain helper function call"
+    );
 }
 
 #[test]
 fn test_codegen_string_constants() {
     let source = "fn test() -> str:
     return \"hello\"";
-    
+
     let ir = compile_pipeline(source).unwrap();
     let llvm_ir = CodeGenerator::new(ir).generate();
-    
+
     // Check that string constants are generated
-    assert!(llvm_ir.contains("@str"), "LLVM IR should contain string constant");
-    assert!(llvm_ir.contains("hello"), "LLVM IR should contain string value");
+    assert!(
+        llvm_ir.contains("@str"),
+        "LLVM IR should contain string constant"
+    );
+    assert!(
+        llvm_ir.contains("hello"),
+        "LLVM IR should contain string value"
+    );
 }
 
 #[test]
@@ -1230,24 +1426,30 @@ fn test_codegen_struct_types() {
 
 fn create_point() -> Point:
     return new Point(10, 20)";
-    
+
     let ir = compile_pipeline(source).unwrap();
     let llvm_ir = CodeGenerator::new(ir).generate();
-    
+
     // Check that struct types are generated
-    assert!(llvm_ir.contains("%struct.Point"), "LLVM IR should contain struct type definition");
+    assert!(
+        llvm_ir.contains("%struct.Point"),
+        "LLVM IR should contain struct type definition"
+    );
 }
 
 #[test]
 fn test_codegen_with_target_triple() {
     let source = "fn test() -> int:
     return 42";
-    
+
     let ir = compile_pipeline(source).unwrap();
     let llvm_ir = CodeGenerator::new(ir).generate_with_target(Some("x86_64-pc-windows-msvc"));
-    
+
     // Check that target triple is set
-    assert!(llvm_ir.contains("x86_64-pc-windows-msvc"), "LLVM IR should contain target triple");
+    assert!(
+        llvm_ir.contains("x86_64-pc-windows-msvc"),
+        "LLVM IR should contain target triple"
+    );
 }
 
 // ============================================================================
@@ -1258,13 +1460,13 @@ fn test_codegen_with_target_triple() {
 fn test_interpreter_simple_arithmetic() {
     let source = "fn main() -> int:
     return 2 + 3";
-    
+
     let program = parse(source).unwrap();
     type_check_program(&program).unwrap();
-    
+
     let mut interpreter = Interpreter::new().unwrap();
     let result = interpreter.interpret(&program).unwrap();
-    
+
     if let pain_runtime::Value::Int(i) = result {
         assert_eq!(i, 5, "Interpreter should compute 2 + 3 = 5");
     } else {
@@ -1278,13 +1480,13 @@ fn test_interpreter_variables() {
     let x = 10
     let y = 20
     return x + y";
-    
+
     let program = parse(source).unwrap();
     type_check_program(&program).unwrap();
-    
+
     let mut interpreter = Interpreter::new().unwrap();
     let result = interpreter.interpret(&program).unwrap();
-    
+
     if let pain_runtime::Value::Int(i) = result {
         assert_eq!(i, 30, "Interpreter should compute 10 + 20 = 30");
     } else {
@@ -1300,13 +1502,13 @@ fn test_interpreter_conditional() {
         return 1
     else:
         return 0";
-    
+
     let program = parse(source).unwrap();
     type_check_program(&program).unwrap();
-    
+
     let mut interpreter = Interpreter::new().unwrap();
     let result = interpreter.interpret(&program).unwrap();
-    
+
     if let pain_runtime::Value::Int(i) = result {
         assert_eq!(i, 1, "Interpreter should return 1 for x > 3");
     } else {
@@ -1323,13 +1525,13 @@ fn test_interpreter_loop() {
         sum = sum + i
         i = i + 1
     return sum";
-    
+
     let program = parse(source).unwrap();
     type_check_program(&program).unwrap();
-    
+
     let mut interpreter = Interpreter::new().unwrap();
     let result = interpreter.interpret(&program).unwrap();
-    
+
     if let pain_runtime::Value::Int(i) = result {
         assert_eq!(i, 10, "Interpreter should compute sum 0+1+2+3+4 = 10");
     } else {
@@ -1344,13 +1546,13 @@ fn test_interpreter_function_call() {
 
 fn main() -> int:
     return add(3, 4)";
-    
+
     let program = parse(source).unwrap();
     type_check_program(&program).unwrap();
-    
+
     let mut interpreter = Interpreter::new().unwrap();
     let result = interpreter.interpret(&program).unwrap();
-    
+
     if let pain_runtime::Value::Int(i) = result {
         assert_eq!(i, 7, "Interpreter should compute add(3, 4) = 7");
     } else {
@@ -1368,13 +1570,13 @@ fn test_interpreter_recursive_function() {
 
 fn main() -> int:
     return factorial(5)";
-    
+
     let program = parse(source).unwrap();
     type_check_program(&program).unwrap();
-    
+
     let mut interpreter = Interpreter::new().unwrap();
     let result = interpreter.interpret(&program).unwrap();
-    
+
     if let pain_runtime::Value::Int(i) = result {
         assert_eq!(i, 120, "Interpreter should compute factorial(5) = 120");
     } else {
@@ -1401,9 +1603,13 @@ fn full_pipeline(source: &str) -> Result<String, String> {
 fn test_full_pipeline_simple() {
     let source = "fn main() -> int:
     return 42";
-    
+
     let result = full_pipeline(source);
-    assert!(result.is_ok(), "Full pipeline should succeed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Full pipeline should succeed: {:?}",
+        result.err()
+    );
     let llvm_ir = result.unwrap();
     assert!(llvm_ir.contains("define"), "Should generate LLVM IR");
 }
@@ -1413,9 +1619,13 @@ fn test_full_pipeline_with_optimizations() {
     let source = "fn main() -> int:
     let x = 2 + 3
     return x";
-    
+
     let result = full_pipeline(source);
-    assert!(result.is_ok(), "Full pipeline should succeed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Full pipeline should succeed: {:?}",
+        result.err()
+    );
     let llvm_ir = result.unwrap();
     // After constant folding, 2 + 3 should be optimized
     assert!(llvm_ir.contains("define"), "Should generate LLVM IR");
@@ -1433,9 +1643,13 @@ fn main() -> int:
     let x = 10
     let y = 20
     return max(x, y)";
-    
+
     let result = full_pipeline(source);
-    assert!(result.is_ok(), "Full pipeline should succeed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Full pipeline should succeed: {:?}",
+        result.err()
+    );
     let llvm_ir = result.unwrap();
     assert!(llvm_ir.contains("@max"), "Should generate max function");
     assert!(llvm_ir.contains("@main"), "Should generate main function");
@@ -1453,12 +1667,19 @@ fn test_full_pipeline_with_loops_main() {
 
 fn main() -> int:
     return sum(10)";
-    
+
     let result = full_pipeline(source);
-    assert!(result.is_ok(), "Full pipeline should succeed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Full pipeline should succeed: {:?}",
+        result.err()
+    );
     let llvm_ir = result.unwrap();
     assert!(llvm_ir.contains("@sum"), "Should generate sum function");
-    assert!(llvm_ir.contains("br"), "Should contain branch instructions for loop");
+    assert!(
+        llvm_ir.contains("br"),
+        "Should contain branch instructions for loop"
+    );
 }
 
 // ============================================================================
@@ -1469,23 +1690,26 @@ fn main() -> int:
 fn test_mlir_codegen_simple() {
     let source = "fn main() -> int:
     return 42";
-    
+
     let ir = compile_pipeline(source).unwrap();
     let mlir_code = MlirCodeGenerator::new(ir).generate();
-    
+
     // Check that MLIR code is generated
     assert!(mlir_code.contains("module"), "MLIR should contain module");
-    assert!(mlir_code.contains("// MLIR generated from Pain"), "MLIR should have header comment");
+    assert!(
+        mlir_code.contains("// MLIR generated from Pain"),
+        "MLIR should have header comment"
+    );
 }
 
 #[test]
 fn test_mlir_codegen_with_functions() {
     let source = "fn add(a: int, b: int) -> int:
     return a + b";
-    
+
     let ir = compile_pipeline(source).unwrap();
     let mlir_code = MlirCodeGenerator::new(ir).generate();
-    
+
     // Check that MLIR code contains function
     assert!(mlir_code.contains("module"), "MLIR should contain module");
 }
@@ -1500,13 +1724,16 @@ fn test_optimization_constant_folding_detailed() {
     let x = 2 + 3
     let y = x * 4
     return y";
-    
+
     let ir = compile_pipeline(source).unwrap();
     let optimized = Optimizer::optimize(ir);
-    
+
     // After constant folding, x should be 5, y should be 20
     // We can't easily check the exact IR structure, but we can verify it still compiles
-    assert!(!optimized.functions.is_empty(), "Should have functions after optimization");
+    assert!(
+        !optimized.functions.is_empty(),
+        "Should have functions after optimization"
+    );
 }
 
 #[test]
@@ -1519,12 +1746,15 @@ fn test_optimization_loop_invariant_motion() {
         sum = sum + constant
         i = i + 1
     return sum";
-    
+
     let ir = compile_pipeline(source).unwrap();
     let optimized = Optimizer::optimize(ir);
-    
+
     // Loop invariant code motion should move constant calculations out of loop
-    assert!(!optimized.functions.is_empty(), "Should have functions after optimization");
+    assert!(
+        !optimized.functions.is_empty(),
+        "Should have functions after optimization"
+    );
 }
 
 #[test]
@@ -1535,12 +1765,15 @@ fn helper(x: int) -> int:
 
 fn main() -> int:
     return helper(5)";
-    
+
     let ir = compile_pipeline(source).unwrap();
     let optimized = Optimizer::optimize(ir);
-    
+
     // Function inlining should inline helper function
-    assert!(!optimized.functions.is_empty(), "Should have functions after optimization");
+    assert!(
+        !optimized.functions.is_empty(),
+        "Should have functions after optimization"
+    );
 }
 
 #[test]
@@ -1553,12 +1786,15 @@ fn test_optimization_tail_call_helper_only() {
 
 fn main() -> int:
     return helper(5, 0)";
-    
+
     let ir = compile_pipeline(source).unwrap();
     let optimized = Optimizer::optimize(ir);
-    
+
     // Tail call optimization should mark tail calls
-    assert!(!optimized.functions.is_empty(), "Should have functions after optimization");
+    assert!(
+        !optimized.functions.is_empty(),
+        "Should have functions after optimization"
+    );
 }
 
 // ============================================================================
@@ -1568,7 +1804,7 @@ fn main() -> int:
 #[test]
 fn test_pipeline_handles_empty_function() {
     let source = "fn empty(): pass";
-    
+
     let result = compile_pipeline(source);
     // Empty function may or may not be supported, but shouldn't crash
     assert!(result.is_ok() || result.is_err());
@@ -1586,9 +1822,13 @@ fn test_pipeline_handles_nested_loops() {
             j = j + 1
         i = i + 1
     return sum";
-    
+
     let result = compile_and_optimize(source);
-    assert!(result.is_ok(), "Should handle nested loops: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Should handle nested loops: {:?}",
+        result.err()
+    );
 }
 
 #[test]
@@ -1604,9 +1844,13 @@ fn test_pipeline_handles_deep_nesting() {
             return 1
     else:
         return 0";
-    
+
     let result = compile_and_optimize(source);
-    assert!(result.is_ok(), "Should handle deep nesting: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Should handle deep nesting: {:?}",
+        result.err()
+    );
 }
 
 #[test]
@@ -1615,9 +1859,13 @@ fn test_pipeline_handles_multiple_returns() {
     if x > 0:
         return 1
     return 0";
-    
+
     let result = compile_and_optimize(source);
-    assert!(result.is_ok(), "Should handle multiple returns: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Should handle multiple returns: {:?}",
+        result.err()
+    );
 }
 
 #[test]
@@ -1633,9 +1881,13 @@ fn test_pipeline_handles_break_continue() {
         sum = sum + i
         i = i + 1
     return sum";
-    
+
     let result = compile_and_optimize(source);
-    assert!(result.is_ok(), "Should handle break/continue: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Should handle break/continue: {:?}",
+        result.err()
+    );
 }
 
 #[test]
@@ -1643,9 +1895,13 @@ fn test_pipeline_handles_list_operations() {
     let source = "fn test() -> int:
     let items = [1, 2, 3, 4, 5]
     return len(items)";
-    
+
     let result = compile_and_optimize(source);
-    assert!(result.is_ok(), "Should handle list operations: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Should handle list operations: {:?}",
+        result.err()
+    );
 }
 
 #[test]
@@ -1653,9 +1909,13 @@ fn test_pipeline_handles_string_operations() {
     let source = "fn test() -> int:
     let s = \"hello\"
     return len(s)";
-    
+
     let result = compile_and_optimize(source);
-    assert!(result.is_ok(), "Should handle string operations: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Should handle string operations: {:?}",
+        result.err()
+    );
 }
 
 #[test]
@@ -1666,9 +1926,13 @@ fn test_pipeline_handles_class_instantiation() {
 
 fn test() -> Point:
     return new Point(10, 20)";
-    
+
     let result = compile_and_optimize(source);
-    assert!(result.is_ok(), "Should handle class instantiation: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Should handle class instantiation: {:?}",
+        result.err()
+    );
 }
 
 #[test]
@@ -1680,16 +1944,20 @@ fn test_pipeline_handles_member_access() {
 fn test() -> int:
     let p = new Point(10, 20)
     return p.x";
-    
+
     let result = compile_and_optimize(source);
-    assert!(result.is_ok(), "Should handle member access: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Should handle member access: {:?}",
+        result.err()
+    );
 }
 
 #[test]
 fn test_pipeline_error_recovery_parse_error() {
     let source = "fn test(
     return 42";
-    
+
     let result = parse(source);
     assert!(result.is_err(), "Should detect parse error");
     let error = result.unwrap_err();
@@ -1700,12 +1968,15 @@ fn test_pipeline_error_recovery_parse_error() {
 fn test_pipeline_error_recovery_type_error() {
     let source = "fn test():
     let x: int = \"not an int\"";
-    
+
     let program = parse(source).unwrap();
     let result = type_check_program(&program);
     assert!(result.is_err(), "Should detect type error");
-    
-    if let Err(TypeError::TypeMismatch { expected, found, .. }) = result {
+
+    if let Err(TypeError::TypeMismatch {
+        expected, found, ..
+    }) = result
+    {
         assert_eq!(expected, Type::Int);
         assert_eq!(found, Type::Str);
     } else {
@@ -1717,11 +1988,11 @@ fn test_pipeline_error_recovery_type_error() {
 fn test_pipeline_error_recovery_undefined_variable() {
     let source = "fn test() -> int:
     return undefined_var";
-    
+
     let program = parse(source).unwrap();
     let result = type_check_program(&program);
     assert!(result.is_err(), "Should detect undefined variable");
-    
+
     if let Err(TypeError::UndefinedVariable { name, .. }) = result {
         assert_eq!(name, "undefined_var");
     } else {
@@ -1736,7 +2007,7 @@ fn test_pipeline_error_recovery_wrong_argument_count() {
 
 fn test() -> int:
     return add(1)";
-    
+
     let program = parse(source).unwrap();
     let result = type_check_program(&program);
     // This may or may not be caught at type checking stage
@@ -1766,10 +2037,14 @@ fn test_pipeline_fibonacci_iterative() {
 
 fn main() -> int:
     return fibonacci(10)";
-    
+
     let result = full_pipeline(source);
-    assert!(result.is_ok(), "Should compile fibonacci: {:?}", result.err());
-    
+    assert!(
+        result.is_ok(),
+        "Should compile fibonacci: {:?}",
+        result.err()
+    );
+
     // Also test with interpreter
     let program = parse(source).unwrap();
     type_check_program(&program).unwrap();
@@ -1796,7 +2071,7 @@ fn test_pipeline_quicksort_like() {
 fn main() -> int:
     let items = [3, 1, 4, 1, 5]
     return partition(items, 0, len(items) - 1)";
-    
+
     let result = compile_and_optimize(source);
     // May or may not fully support all list operations yet
     assert!(result.is_ok() || result.is_err());
@@ -1818,10 +2093,14 @@ fn power(x: int, n: int) -> int:
 
 fn main() -> int:
     return power(2, 8)";
-    
+
     let result = full_pipeline(source);
-    assert!(result.is_ok(), "Should compile math library: {:?}", result.err());
-    
+    assert!(
+        result.is_ok(),
+        "Should compile math library: {:?}",
+        result.err()
+    );
+
     // Test with interpreter
     let program = parse(source).unwrap();
     type_check_program(&program).unwrap();
@@ -1831,4 +2110,3 @@ fn main() -> int:
         assert_eq!(i, 256, "power(2, 8) should be 256");
     }
 }
-

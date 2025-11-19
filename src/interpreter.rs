@@ -1,8 +1,8 @@
 // Interpreter for Pain AST
 
-use crate::ast::{Program, Item, Function, Statement, Expr, Type, Class};
+use crate::ast::{Class, Expr, Function, Item, Program, Statement, Type};
 use crate::stdlib::is_stdlib_function;
-use pain_runtime::{Runtime, Value, ClassInstance};
+use pain_runtime::{ClassInstance, Runtime, Value};
 use std::collections::HashMap;
 
 /// Control flow result
@@ -79,7 +79,7 @@ impl Interpreter {
     /// Interpret a Pain program
     pub fn interpret(&mut self, program: &Program) -> Result<Value, &'static str> {
         let mut env = Environment::new();
-        
+
         // Register all functions and classes from program
         for item in &program.items {
             match item {
@@ -91,33 +91,39 @@ impl Interpreter {
                 }
             }
         }
-        
+
         // Find and execute main function
-        let main_func = env.get_function("main")
+        let main_func = env
+            .get_function("main")
             .ok_or("No main function found")?
             .clone();
-        
+
         self.eval_function(&main_func, &[], &mut env)
     }
 
     /// Evaluate a function call
-    fn eval_function(&mut self, func: &Function, args: &[Value], parent_env: &mut Environment) -> Result<Value, &'static str> {
+    fn eval_function(
+        &mut self,
+        func: &Function,
+        args: &[Value],
+        parent_env: &mut Environment,
+    ) -> Result<Value, &'static str> {
         // Create new scope for function
         let mut func_env = Environment::new();
-        
+
         // Copy functions and classes from parent scope
         func_env.functions = parent_env.functions.clone();
         func_env.classes = parent_env.classes.clone();
-        
+
         // Bind parameters
         if args.len() != func.params.len() {
             return Err("Argument count mismatch");
         }
-        
+
         for (param, arg_value) in func.params.iter().zip(args.iter()) {
             func_env.set_var(param.name.clone(), arg_value.clone());
         }
-        
+
         // Execute function body
         let result = Value::None;
         for stmt in &func.body {
@@ -128,18 +134,27 @@ impl Interpreter {
                 ControlFlow::Next => {}
             }
         }
-        
+
         Ok(result)
     }
 
     /// Evaluate a statement
-    fn eval_stmt(&mut self, stmt: &Statement, env: &mut Environment) -> Result<ControlFlow, &'static str> {
+    fn eval_stmt(
+        &mut self,
+        stmt: &Statement,
+        env: &mut Environment,
+    ) -> Result<ControlFlow, &'static str> {
         match stmt {
             Statement::Expr(expr) => {
                 self.eval_expr(expr, env)?;
                 Ok(ControlFlow::Next)
             }
-            Statement::Let { name, init, mutable: _, ty: _ } => {
+            Statement::Let {
+                name,
+                init,
+                mutable: _,
+                ty: _,
+            } => {
                 let value = self.eval_expr(init, env)?;
                 env.set_var(name.clone(), value);
                 Ok(ControlFlow::Next)
@@ -158,7 +173,7 @@ impl Interpreter {
                     Value::Bool(b) => b,
                     _ => return Err("If condition must be boolean"),
                 };
-                
+
                 if cond_bool {
                     for stmt in then {
                         match self.eval_stmt(stmt, env)? {
@@ -187,11 +202,11 @@ impl Interpreter {
                         Value::Bool(b) => b,
                         _ => return Err("While condition must be boolean"),
                     };
-                    
+
                     if !cond_bool {
                         break;
                     }
-                    
+
                     for stmt in body {
                         match self.eval_stmt(stmt, env)? {
                             ControlFlow::Return(v) => return Ok(ControlFlow::Return(v)),
@@ -206,7 +221,7 @@ impl Interpreter {
             Statement::For { var, iter, body } => {
                 // Evaluate iterator expression
                 let iter_val = self.eval_expr(iter, env)?;
-                
+
                 // Handle different iterator types
                 match iter_val {
                     // Range: for x in range(start, end) - treat as Call to range function
@@ -245,10 +260,11 @@ impl Interpreter {
                             if let Expr::Ident(func_name) = callee.as_ref() {
                                 if func_name == "range" {
                                     // Evaluate range arguments
-                                    let arg_values: Vec<Value> = args.iter()
+                                    let arg_values: Vec<Value> = args
+                                        .iter()
                                         .map(|arg| self.eval_expr(arg, env))
                                         .collect::<Result<Vec<_>, _>>()?;
-                                    
+
                                     let range_values: Vec<i64> = match arg_values.len() {
                                         1 => {
                                             // range(end) - from 0 to end-1
@@ -260,7 +276,9 @@ impl Interpreter {
                                         }
                                         2 => {
                                             // range(start, end) - from start to end-1
-                                            if let (Value::Int(start), Value::Int(end)) = (&arg_values[0], &arg_values[1]) {
+                                            if let (Value::Int(start), Value::Int(end)) =
+                                                (&arg_values[0], &arg_values[1])
+                                            {
                                                 (*start..*end).collect()
                                             } else {
                                                 return Err("range() requires integer arguments");
@@ -268,13 +286,15 @@ impl Interpreter {
                                         }
                                         _ => return Err("range() takes 1 or 2 arguments"),
                                     };
-                                    
+
                                     // Iterate over range
                                     for i in range_values {
                                         env.set_var(var.clone(), Value::Int(i));
                                         for stmt in body {
                                             match self.eval_stmt(stmt, env)? {
-                                                ControlFlow::Return(v) => return Ok(ControlFlow::Return(v)),
+                                                ControlFlow::Return(v) => {
+                                                    return Ok(ControlFlow::Return(v))
+                                                }
                                                 ControlFlow::Break => break,
                                                 ControlFlow::Continue => continue,
                                                 ControlFlow::Next => {}
@@ -312,14 +332,13 @@ impl Interpreter {
                 }
                 Ok(Value::List(list))
             }
-            
+
             // Variables
-            Expr::Ident(name) => {
-                env.get_var(name)
-                    .cloned()
-                    .ok_or_else(|| "Undefined variable")
-            }
-            
+            Expr::Ident(name) => env
+                .get_var(name)
+                .cloned()
+                .ok_or_else(|| "Undefined variable"),
+
             // Binary operations
             Expr::Add(lhs, rhs) => {
                 let lhs_val = self.eval_expr(lhs, env)?;
@@ -329,7 +348,9 @@ impl Interpreter {
                     (Value::Float(a), Value::Float(b)) => Ok(Value::Float(a + b)),
                     (Value::Int(a), Value::Float(b)) => Ok(Value::Float(a as f64 + b)),
                     (Value::Float(a), Value::Int(b)) => Ok(Value::Float(a + b as f64)),
-                    (Value::String(a), Value::String(b)) => Ok(Value::String(format!("{}{}", a, b))),
+                    (Value::String(a), Value::String(b)) => {
+                        Ok(Value::String(format!("{}{}", a, b)))
+                    }
                     _ => Err("Invalid operands for addition"),
                 }
             }
@@ -399,7 +420,7 @@ impl Interpreter {
                     _ => Err("Invalid operands for modulo"),
                 }
             }
-            
+
             // Comparisons
             Expr::Eq(lhs, rhs) => {
                 let lhs_val = self.eval_expr(lhs, env)?;
@@ -461,7 +482,7 @@ impl Interpreter {
                 };
                 Ok(Value::Bool(result))
             }
-            
+
             // Logical operations
             Expr::And(lhs, rhs) => {
                 let lhs_val = self.eval_expr(lhs, env)?;
@@ -495,7 +516,7 @@ impl Interpreter {
                 };
                 Ok(Value::Bool(rhs_bool))
             }
-            
+
             // Unary operations
             Expr::Not(operand) => {
                 let val = self.eval_expr(operand, env)?;
@@ -513,7 +534,7 @@ impl Interpreter {
                     _ => Err("Invalid operand for negation"),
                 }
             }
-            
+
             // Assignment
             Expr::Assign(lhs, rhs) => {
                 let rhs_val = self.eval_expr(rhs, env)?;
@@ -620,16 +641,17 @@ impl Interpreter {
                 }
                 Ok(result)
             }
-            
+
             // Function call
             Expr::Call { callee, args } => {
                 let callee_expr = callee.as_ref();
                 if let Expr::Ident(func_name) = callee_expr {
                     // Evaluate arguments
-                    let arg_values: Vec<Value> = args.iter()
+                    let arg_values: Vec<Value> = args
+                        .iter()
                         .map(|arg| self.eval_expr(arg, env))
                         .collect::<Result<Vec<_>, _>>()?;
-                    
+
                     // Check if it's a stdlib function
                     if is_stdlib_function(func_name) {
                         self.call_stdlib_function(func_name, &arg_values)
@@ -643,13 +665,13 @@ impl Interpreter {
                     Err("Invalid function call")
                 }
             }
-            
+
             // F-string interpolation
             Expr::FString(template) => {
                 // Simple f-string interpolation: {var} syntax
                 let mut result = String::new();
                 let mut chars = template.chars().peekable();
-                
+
                 while let Some(ch) = chars.next() {
                     if ch == '{' {
                         // Parse variable name
@@ -661,18 +683,18 @@ impl Interpreter {
                             }
                             var_name.push(chars.next().unwrap());
                         }
-                        
+
                         // Get variable value from environment
                         if let Some(value) = env.get_var(&var_name) {
-                        match value {
-                            Value::Int(n) => result.push_str(&n.to_string()),
-                            Value::Float(f) => result.push_str(&f.to_string()),
-                            Value::Bool(b) => result.push_str(&b.to_string()),
-                            Value::String(s) => result.push_str(s),
-                            Value::None => result.push_str("None"),
-                            Value::List(_) | Value::Array(_) => result.push_str("[...]"),
-                            Value::Object(_) => result.push_str("[Object]"),
-                        }
+                            match value {
+                                Value::Int(n) => result.push_str(&n.to_string()),
+                                Value::Float(f) => result.push_str(&f.to_string()),
+                                Value::Bool(b) => result.push_str(&b.to_string()),
+                                Value::String(s) => result.push_str(s),
+                                Value::None => result.push_str("None"),
+                                Value::List(_) | Value::Array(_) => result.push_str("[...]"),
+                                Value::Object(_) => result.push_str("[Object]"),
+                            }
                         } else {
                             return Err("Undefined variable in f-string");
                         }
@@ -698,15 +720,15 @@ impl Interpreter {
                         result.push(ch);
                     }
                 }
-                
+
                 Ok(Value::String(result))
             }
-            
+
             // Indexing: container[index]
             Expr::Index(container, index) => {
                 let container_val = self.eval_expr(container, env)?;
                 let index_val = self.eval_expr(index, env)?;
-                
+
                 match (container_val, index_val) {
                     // String indexing
                     (Value::String(s), Value::Int(i)) => {
@@ -726,20 +748,19 @@ impl Interpreter {
                     _ => Err("Indexing not supported for this type"),
                 }
             }
-            
+
             // Member access: object.field
             Expr::Member(obj, field_name) => {
                 let obj_val = self.eval_expr(obj, env)?;
                 match obj_val {
-                    Value::Object(instance) => {
-                        instance.get_field(&field_name)
-                            .cloned()
-                            .ok_or_else(|| "Field not found")
-                    }
+                    Value::Object(instance) => instance
+                        .get_field(&field_name)
+                        .cloned()
+                        .ok_or_else(|| "Field not found"),
                     _ => Err("Member access only supported for objects"),
                 }
             }
-            
+
             // Type checking: expr is Type
             Expr::IsInstance(expr, ty) => {
                 let expr_val = self.eval_expr(expr, env)?;
@@ -758,22 +779,24 @@ impl Interpreter {
                 };
                 Ok(Value::Bool(is_instance))
             }
-            
+
             // Object creation: new ClassName(args...)
             Expr::New { class_name, args } => {
                 // Get class definition and clone it
-                let class = env.get_class(&class_name)
+                let class = env
+                    .get_class(&class_name)
                     .ok_or_else(|| "Class not found")?
                     .clone();
-                
+
                 // Evaluate arguments
-                let arg_values: Vec<Value> = args.iter()
+                let arg_values: Vec<Value> = args
+                    .iter()
                     .map(|arg| self.eval_expr(arg, env))
                     .collect::<Result<Vec<_>, _>>()?;
-                
+
                 // Create instance
                 let mut instance = ClassInstance::new(class_name.clone());
-                
+
                 // Initialize fields from constructor arguments
                 // For now, assume fields are initialized in order
                 // TODO: Support named arguments and proper constructors
@@ -792,7 +815,7 @@ impl Interpreter {
                         instance.set_field(field.name.clone(), default);
                     }
                 }
-                
+
                 Ok(Value::Object(instance))
             }
         }
@@ -820,7 +843,9 @@ impl Interpreter {
                         Value::List(list) => {
                             print!("[");
                             for (i, item) in list.iter().enumerate() {
-                                if i > 0 { print!(", "); }
+                                if i > 0 {
+                                    print!(", ");
+                                }
                                 match item {
                                     Value::Int(n) => print!("{}", n),
                                     Value::Float(f) => print!("{}", f),
@@ -835,7 +860,9 @@ impl Interpreter {
                         Value::Array(arr) => {
                             print!("[");
                             for (i, item) in arr.iter().enumerate() {
-                                if i > 0 { print!(", "); }
+                                if i > 0 {
+                                    print!(", ");
+                                }
                                 match item {
                                     Value::Int(n) => print!("{}", n),
                                     Value::Float(f) => print!("{}", f),
@@ -850,7 +877,7 @@ impl Interpreter {
                     }
                 }
                 println!();
-        Ok(Value::None)
+                Ok(Value::None)
             }
             "abs" => {
                 if args.len() != 1 {

@@ -56,7 +56,10 @@ impl MlirCodeGenerator {
 
     fn generate_function(&mut self, func: &IrFunction) {
         // Check if this is a GPU kernel
-        let is_gpu_kernel = func.attributes.iter().any(|attr| attr == "@kernel" || attr == "kernel");
+        let is_gpu_kernel = func
+            .attributes
+            .iter()
+            .any(|attr| attr == "@kernel" || attr == "kernel");
 
         if is_gpu_kernel {
             self.generate_gpu_kernel(func);
@@ -138,13 +141,11 @@ impl MlirCodeGenerator {
     }
 
     fn generate_block(&mut self, func: &IrFunction, block: &BasicBlock) {
-        let label = self.block_map.get(&block.id)
-            .cloned()
-            .unwrap_or_else(|| {
-                let new_label = self.new_label();
-                self.block_map.insert(block.id, new_label.clone());
-                new_label
-            });
+        let label = self.block_map.get(&block.id).cloned().unwrap_or_else(|| {
+            let new_label = self.new_label();
+            self.block_map.insert(block.id, new_label.clone());
+            new_label
+        });
 
         // Only print label if it's not the entry block or if it has predecessors
         if !block.predecessors.is_empty() || block.id != func.entry_block {
@@ -169,20 +170,29 @@ impl MlirCodeGenerator {
         let result = self.new_register();
         match inst {
             Instruction::ConstInt { value } => {
-                self.mlir_code.push_str(&format!("      {} = arith.constant {} : i64\n", result, value));
+                self.mlir_code.push_str(&format!(
+                    "      {} = arith.constant {} : i64\n",
+                    result, value
+                ));
             }
             Instruction::ConstFloat { value } => {
-                self.mlir_code.push_str(&format!("      {} = arith.constant {} : f64\n", result, value));
+                self.mlir_code.push_str(&format!(
+                    "      {} = arith.constant {} : f64\n",
+                    result, value
+                ));
             }
             Instruction::ConstBool { value } => {
                 let val = if *value { "true" } else { "false" };
-                self.mlir_code.push_str(&format!("      {} = arith.constant {} : i1\n", result, val));
+                self.mlir_code
+                    .push_str(&format!("      {} = arith.constant {} : i1\n", result, val));
             }
             Instruction::ConstString { value } => {
                 // Strings as memref or tensor
                 self.mlir_code.push_str(&format!(
                     "      {} = arith.constant dense<\"{}\"> : tensor<{}xi8>\n",
-                    result, value, value.len()
+                    result,
+                    value,
+                    value.len()
                 ));
             }
             Instruction::ConstUnit => {
@@ -296,7 +306,8 @@ impl MlirCodeGenerator {
                 let op_val = self.get_value(*operand);
                 // Not: xor with true (1)
                 let true_val = self.new_register();
-                self.mlir_code.push_str(&format!("      {} = arith.constant true : i1\n", true_val));
+                self.mlir_code
+                    .push_str(&format!("      {} = arith.constant true : i1\n", true_val));
                 self.mlir_code.push_str(&format!(
                     "      {} = arith.xori {}, {} : i1\n",
                     result, op_val, true_val
@@ -304,19 +315,20 @@ impl MlirCodeGenerator {
             }
             Instruction::Neg { operand } => {
                 let op_val = self.get_value(*operand);
-                self.mlir_code.push_str(&format!(
-                    "      {} = arith.negf {} : f64\n",
-                    result, op_val
-                ));
+                self.mlir_code
+                    .push_str(&format!("      {} = arith.negf {} : f64\n", result, op_val));
             }
             Instruction::TensorOp { op, args } => {
                 self.generate_tensor_op(op, args, &result);
             }
-            Instruction::Call { function_name, args, .. } => {
+            Instruction::Call {
+                function_name,
+                args,
+                ..
+            } => {
                 if let Some(name) = function_name {
-                    let arg_values: Vec<String> = args.iter()
-                        .map(|arg_id| self.get_value(*arg_id))
-                        .collect();
+                    let arg_values: Vec<String> =
+                        args.iter().map(|arg_id| self.get_value(*arg_id)).collect();
                     let args_str = arg_values.join(", ");
                     self.mlir_code.push_str(&format!(
                         "      {} = func.call @{}({}) : (",
@@ -329,7 +341,8 @@ impl MlirCodeGenerator {
             Instruction::Return { value } => {
                 if let Some(val) = value {
                     let val_str = self.get_value(*val);
-                    self.mlir_code.push_str(&format!("      func.return {} : i64\n", val_str));
+                    self.mlir_code
+                        .push_str(&format!("      func.return {} : i64\n", val_str));
                 } else {
                     self.mlir_code.push_str("      func.return\n");
                 }
@@ -347,9 +360,7 @@ impl MlirCodeGenerator {
     }
 
     fn generate_tensor_op(&mut self, op: &TensorOp, args: &[ValueId], result: &str) {
-        let arg_values: Vec<String> = args.iter()
-            .map(|arg_id| self.get_value(*arg_id))
-            .collect();
+        let arg_values: Vec<String> = args.iter().map(|arg_id| self.get_value(*arg_id)).collect();
 
         match op {
             TensorOp::Add => {
@@ -409,41 +420,41 @@ impl MlirCodeGenerator {
 
     fn generate_terminator(&mut self, terminator: &Instruction) {
         match terminator {
-            Instruction::Branch { cond, then_block, else_block } => {
+            Instruction::Branch {
+                cond,
+                then_block,
+                else_block,
+            } => {
                 let cond_val = self.get_value(*cond);
-                let then_label = self.block_map.get(then_block)
-                    .cloned()
-                    .unwrap_or_else(|| {
-                        let label = self.new_label();
-                        self.block_map.insert(*then_block, label.clone());
-                        label
-                    });
-                let else_label = self.block_map.get(else_block)
-                    .cloned()
-                    .unwrap_or_else(|| {
-                        let label = self.new_label();
-                        self.block_map.insert(*else_block, label.clone());
-                        label
-                    });
+                let then_label = self.block_map.get(then_block).cloned().unwrap_or_else(|| {
+                    let label = self.new_label();
+                    self.block_map.insert(*then_block, label.clone());
+                    label
+                });
+                let else_label = self.block_map.get(else_block).cloned().unwrap_or_else(|| {
+                    let label = self.new_label();
+                    self.block_map.insert(*else_block, label.clone());
+                    label
+                });
                 self.mlir_code.push_str(&format!(
                     "      cf.cond_br {}, ^{}, ^{}\n",
                     cond_val, then_label, else_label
                 ));
             }
             Instruction::Jump { target } => {
-                let target_label = self.block_map.get(target)
-                    .cloned()
-                    .unwrap_or_else(|| {
-                        let label = self.new_label();
-                        self.block_map.insert(*target, label.clone());
-                        label
-                    });
-                self.mlir_code.push_str(&format!("      cf.br ^{}\n", target_label));
+                let target_label = self.block_map.get(target).cloned().unwrap_or_else(|| {
+                    let label = self.new_label();
+                    self.block_map.insert(*target, label.clone());
+                    label
+                });
+                self.mlir_code
+                    .push_str(&format!("      cf.br ^{}\n", target_label));
             }
             Instruction::Return { value } => {
                 if let Some(val) = value {
                     let val_str = self.get_value(*val);
-                    self.mlir_code.push_str(&format!("      func.return {} : i64\n", val_str));
+                    self.mlir_code
+                        .push_str(&format!("      func.return {} : i64\n", val_str));
                 } else {
                     self.mlir_code.push_str("      func.return\n");
                 }
@@ -474,7 +485,8 @@ impl MlirCodeGenerator {
             }
             IrType::Tensor { element, dims } => {
                 let elem_type = self.mlir_type(element);
-                let dims_str: Vec<String> = dims.iter()
+                let dims_str: Vec<String> = dims
+                    .iter()
                     .map(|d| d.map(|s| s.to_string()).unwrap_or_else(|| "?".to_string()))
                     .collect();
                 if dims_str.is_empty() {
@@ -486,10 +498,11 @@ impl MlirCodeGenerator {
             IrType::Struct { name, .. } => {
                 format!("%struct.{}", name)
             }
-            IrType::Function { params, return_type } => {
-                let param_types: Vec<String> = params.iter()
-                    .map(|p| self.mlir_type(p))
-                    .collect();
+            IrType::Function {
+                params,
+                return_type,
+            } => {
+                let param_types: Vec<String> = params.iter().map(|p| self.mlir_type(p)).collect();
                 let ret_type = self.mlir_type(return_type);
                 format!("({}) -> {}", param_types.join(", "), ret_type)
             }
@@ -498,7 +511,8 @@ impl MlirCodeGenerator {
     }
 
     fn get_value(&self, value_id: ValueId) -> String {
-        self.value_map.get(&value_id)
+        self.value_map
+            .get(&value_id)
             .cloned()
             .unwrap_or_else(|| format!("%v{}", value_id.0))
     }
@@ -515,4 +529,3 @@ impl MlirCodeGenerator {
         label
     }
 }
-

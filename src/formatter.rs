@@ -99,7 +99,12 @@ impl Formatter {
                 self.format_expr(expr);
                 self.newline();
             }
-            Statement::Let { mutable, name, ty, init } => {
+            Statement::Let {
+                mutable,
+                name,
+                ty,
+                init,
+            } => {
                 self.write_indent();
                 if *mutable {
                     self.write("var ");
@@ -367,9 +372,18 @@ impl Formatter {
     fn needs_parens(&self, expr: &Expr) -> bool {
         matches!(
             expr,
-            Expr::Add(_, _) | Expr::Sub(_, _) | Expr::Mul(_, _) | Expr::Div(_, _)
-                | Expr::Mod(_, _) | Expr::Eq(_, _) | Expr::Ne(_, _) | Expr::Lt(_, _)
-                | Expr::Gt(_, _) | Expr::Le(_, _) | Expr::Ge(_, _) | Expr::And(_, _)
+            Expr::Add(_, _)
+                | Expr::Sub(_, _)
+                | Expr::Mul(_, _)
+                | Expr::Div(_, _)
+                | Expr::Mod(_, _)
+                | Expr::Eq(_, _)
+                | Expr::Ne(_, _)
+                | Expr::Lt(_, _)
+                | Expr::Gt(_, _)
+                | Expr::Le(_, _)
+                | Expr::Ge(_, _)
+                | Expr::And(_, _)
                 | Expr::Or(_, _)
         )
     }
@@ -466,7 +480,7 @@ impl Default for Formatter {
 mod tests {
     use super::*;
     use crate::parse;
-    use crate::span::{Span, Position};
+    use crate::span::{Position, Span};
 
     #[test]
     fn test_format_simple_function() {
@@ -536,17 +550,15 @@ mod tests {
     #[test]
     fn test_format_doc_comment() {
         let program = Program {
-            items: vec![
-                Item::Function(Function {
-                    doc: Some("This is a test function.".to_string()),
-                    attrs: vec![],
-                    name: "test".to_string(),
-                    params: vec![],
-                    return_type: None,
-                    body: vec![],
-                    span: Span::single(Position::start()),
-                }),
-            ],
+            items: vec![Item::Function(Function {
+                doc: Some("This is a test function.".to_string()),
+                attrs: vec![],
+                name: "test".to_string(),
+                params: vec![],
+                return_type: None,
+                body: vec![],
+                span: Span::single(Position::start()),
+            })],
             span: Span::single(Position::start()),
         };
         let formatted = Formatter::format(&program);
@@ -557,20 +569,18 @@ mod tests {
     #[test]
     fn test_format_attributes() {
         let program = Program {
-            items: vec![
-                Item::Function(Function {
-                    doc: None,
-                    attrs: vec![Attribute {
-                        name: "inline".to_string(),
-                        args: vec![],
-                    }],
-                    name: "test".to_string(),
-                    params: vec![],
-                    return_type: None,
-                    body: vec![],
-                    span: Span::single(Position::start()),
-                }),
-            ],
+            items: vec![Item::Function(Function {
+                doc: None,
+                attrs: vec![Attribute {
+                    name: "inline".to_string(),
+                    args: vec![],
+                }],
+                name: "test".to_string(),
+                params: vec![],
+                return_type: None,
+                body: vec![],
+                span: Span::single(Position::start()),
+            })],
             span: Span::single(Position::start()),
         };
         let formatted = Formatter::format(&program);
@@ -586,4 +596,3 @@ mod tests {
         assert!(formatted.contains("a + b * c"));
     }
 }
-

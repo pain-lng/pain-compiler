@@ -1,8 +1,8 @@
 // Type checker module - type inference and type checking
 
 use crate::ast::*;
-use crate::span::{Span, Position};
-use crate::stdlib::{is_stdlib_function, get_stdlib_return_type};
+use crate::span::{Position, Span};
+use crate::stdlib::{get_stdlib_return_type, is_stdlib_function};
 use std::collections::HashMap;
 
 /// Helper function to get span from an expression
@@ -16,10 +16,25 @@ fn get_expr_span(_expr: &Expr) -> Span {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum TypeError {
-    UndefinedVariable { name: String, span: Span },
-    TypeMismatch { expected: Type, found: Type, span: Span },
-    CannotInferType { message: String, span: Span },
-    InvalidOperation { op: String, left: Type, right: Option<Type>, span: Span },
+    UndefinedVariable {
+        name: String,
+        span: Span,
+    },
+    TypeMismatch {
+        expected: Type,
+        found: Type,
+        span: Span,
+    },
+    CannotInferType {
+        message: String,
+        span: Span,
+    },
+    InvalidOperation {
+        op: String,
+        left: Type,
+        right: Option<Type>,
+        span: Span,
+    },
 }
 
 pub type TypeResult<T> = Result<T, TypeError>;
@@ -39,23 +54,23 @@ impl TypeContext {
             classes: HashMap::new(),
         }
     }
-    
+
     pub fn add_class(&mut self, name: String, class: Class) {
         self.classes.insert(name, class);
     }
-    
+
     pub fn get_class(&self, name: &str) -> Option<&Class> {
         self.classes.get(name)
     }
-    
+
     pub fn add_variable(&mut self, name: String, ty: Type) {
         self.variables.insert(name, ty);
     }
-    
+
     pub fn get_variable(&self, name: &str) -> Option<&Type> {
         self.variables.get(name)
     }
-    
+
     pub fn add_function(&mut self, name: String, func: Function) {
         self.functions.insert(name, func);
     }
@@ -63,7 +78,7 @@ impl TypeContext {
 
 pub fn type_check_program(program: &Program) -> TypeResult<()> {
     let mut ctx = TypeContext::new();
-    
+
     // First pass: collect class and function signatures
     for item in &program.items {
         match item {
@@ -75,7 +90,7 @@ pub fn type_check_program(program: &Program) -> TypeResult<()> {
             }
         }
     }
-    
+
     // Second pass: type check classes and functions
     for item in &program.items {
         match item {
@@ -87,58 +102,58 @@ pub fn type_check_program(program: &Program) -> TypeResult<()> {
             }
         }
     }
-    
+
     Ok(())
 }
 
 fn type_check_class(ctx: &mut TypeContext, class: &Class) -> TypeResult<()> {
     // Create a new context for class methods (with access to class fields)
     let mut class_ctx = ctx.clone();
-    
+
     // Add class fields to context (as variables)
     for field in &class.fields {
         class_ctx.add_variable(field.name.clone(), field.ty.clone());
     }
-    
+
     // Type check methods
     for method in &class.methods {
         // Add 'self' parameter implicitly
         let mut method_ctx = class_ctx.clone();
         method_ctx.add_variable("self".to_string(), Type::Named(class.name.clone()));
-        
+
         // Add method parameters
         for param in &method.params {
             method_ctx.add_variable(param.name.clone(), param.ty.clone());
         }
-        
+
         // Type check method body
         for stmt in &method.body {
             type_check_statement(&mut method_ctx, stmt)?;
         }
     }
-    
+
     Ok(())
 }
 
 fn type_check_function(ctx: &mut TypeContext, func: &Function) -> TypeResult<()> {
     // Create new scope for function parameters
     let mut func_ctx = ctx.clone();
-    
+
     // Add parameters to context
     for param in &func.params {
         func_ctx.add_variable(param.name.clone(), param.ty.clone());
     }
-    
+
     // Type check body
     for stmt in &func.body {
         type_check_statement(&mut func_ctx, stmt)?;
     }
-    
+
     // Check return type if specified
     if let Some(_expected_return) = &func.return_type {
         // TODO: Check that all return statements match expected_return
     }
-    
+
     Ok(())
 }
 
@@ -150,7 +165,7 @@ fn type_check_statement(ctx: &mut TypeContext, stmt: &Statement) -> TypeResult<T
         }
         Statement::Let { name, ty, init, .. } => {
             let init_type = infer_expr_type(ctx, init)?;
-            
+
             let var_type = if let Some(annotated_type) = ty {
                 // Check that inferred type matches annotated type
                 if !types_compatible(&init_type, annotated_type) {
@@ -167,7 +182,7 @@ fn type_check_statement(ctx: &mut TypeContext, stmt: &Statement) -> TypeResult<T
                 // Infer type from initializer
                 init_type
             };
-            
+
             ctx.add_variable(name.clone(), var_type.clone());
             Ok(var_type)
         }
@@ -178,7 +193,9 @@ fn type_check_statement(ctx: &mut TypeContext, stmt: &Statement) -> TypeResult<T
                 Ok(Type::Dynamic) // void return
             }
         }
-        Statement::If { cond, then, else_, .. } => {
+        Statement::If {
+            cond, then, else_, ..
+        } => {
             let cond_type = infer_expr_type(ctx, cond)?;
             if !types_compatible(&cond_type, &Type::Bool) {
                 let span = get_expr_span(cond);
@@ -188,37 +205,39 @@ fn type_check_statement(ctx: &mut TypeContext, stmt: &Statement) -> TypeResult<T
                     span,
                 });
             }
-            
+
             // Type check branches
             for stmt in then {
                 type_check_statement(ctx, stmt)?;
             }
-            
+
             if let Some(else_body) = else_ {
                 for stmt in else_body {
                     type_check_statement(ctx, stmt)?;
                 }
             }
-            
+
             Ok(Type::Dynamic)
         }
-        Statement::For { var, iter, body, .. } => {
+        Statement::For {
+            var, iter, body, ..
+        } => {
             let iter_type = infer_expr_type(ctx, iter)?;
             // TODO: Check that iter_type is iterable (list, array, etc.)
-            
+
             // Infer element type from iterator
             let element_type = match &iter_type {
                 Type::List(inner) => *inner.clone(),
                 Type::Array(inner) => *inner.clone(),
                 _ => Type::Dynamic, // Fallback
             };
-            
+
             ctx.add_variable(var.clone(), element_type);
-            
+
             for stmt in body {
                 type_check_statement(ctx, stmt)?;
             }
-            
+
             Ok(Type::Dynamic)
         }
         Statement::While { cond, body, .. } => {
@@ -231,11 +250,11 @@ fn type_check_statement(ctx: &mut TypeContext, stmt: &Statement) -> TypeResult<T
                     span,
                 });
             }
-            
+
             for stmt in body {
                 type_check_statement(ctx, stmt)?;
             }
-            
+
             Ok(Type::Dynamic)
         }
         Statement::Break | Statement::Continue => Ok(Type::Dynamic),
@@ -266,19 +285,29 @@ fn infer_expr_type(ctx: &TypeContext, expr: &Expr) -> TypeResult<Type> {
                 // Return Dynamic for now - actual type will be checked in Call
                 return Ok(Type::Dynamic);
             }
-            ctx.get_variable(name)
-                .cloned()
-                .ok_or_else(|| {
-                    let span = get_expr_span(expr);
-                    TypeError::UndefinedVariable { name: name.clone(), span }
-                })
+            ctx.get_variable(name).cloned().ok_or_else(|| {
+                let span = get_expr_span(expr);
+                TypeError::UndefinedVariable {
+                    name: name.clone(),
+                    span,
+                }
+            })
         }
-        Expr::Add(left, right) | Expr::Sub(left, right) | Expr::Mul(left, right) | Expr::Div(left, right) | Expr::Mod(left, right) => {
+        Expr::Add(left, right)
+        | Expr::Sub(left, right)
+        | Expr::Mul(left, right)
+        | Expr::Div(left, right)
+        | Expr::Mod(left, right) => {
             let left_type = infer_expr_type(ctx, left)?;
             let right_type = infer_expr_type(ctx, right)?;
             infer_binary_op_type(&left_type, &right_type)
         }
-        Expr::Eq(left, right) | Expr::Ne(left, right) | Expr::Lt(left, right) | Expr::Gt(left, right) | Expr::Le(left, right) | Expr::Ge(left, right) => {
+        Expr::Eq(left, right)
+        | Expr::Ne(left, right)
+        | Expr::Lt(left, right)
+        | Expr::Gt(left, right)
+        | Expr::Le(left, right)
+        | Expr::Ge(left, right) => {
             let _left_type = infer_expr_type(ctx, left)?;
             let _right_type = infer_expr_type(ctx, right)?;
             Ok(Type::Bool)
@@ -286,7 +315,9 @@ fn infer_expr_type(ctx: &TypeContext, expr: &Expr) -> TypeResult<Type> {
         Expr::And(left, right) | Expr::Or(left, right) => {
             let left_type = infer_expr_type(ctx, left)?;
             let right_type = infer_expr_type(ctx, right)?;
-            if types_compatible(&left_type, &Type::Bool) && types_compatible(&right_type, &Type::Bool) {
+            if types_compatible(&left_type, &Type::Bool)
+                && types_compatible(&right_type, &Type::Bool)
+            {
                 Ok(Type::Bool)
             } else {
                 let span = get_expr_span(expr);
@@ -327,9 +358,8 @@ fn infer_expr_type(ctx: &TypeContext, expr: &Expr) -> TypeResult<Type> {
         }
         Expr::Call { callee, args } => {
             // Evaluate argument types
-            let arg_types: Result<Vec<Type>, TypeError> = args.iter()
-                .map(|arg| infer_expr_type(ctx, arg))
-                .collect();
+            let arg_types: Result<Vec<Type>, TypeError> =
+                args.iter().map(|arg| infer_expr_type(ctx, arg)).collect();
             let arg_types = arg_types?;
 
             // Handle stdlib functions
@@ -345,7 +375,7 @@ fn infer_expr_type(ctx: &TypeContext, expr: &Expr) -> TypeResult<Type> {
         Expr::Index(container, index) => {
             let container_type = infer_expr_type(ctx, container)?;
             let _index_type = infer_expr_type(ctx, index)?;
-            
+
             match container_type {
                 Type::List(inner) | Type::Array(inner) => Ok(*inner),
                 Type::Map(_, value) => Ok(*value),
@@ -390,9 +420,8 @@ fn infer_expr_type(ctx: &TypeContext, expr: &Expr) -> TypeResult<Type> {
             if let Some(_class) = ctx.get_class(class_name) {
                 // TODO: Check constructor arguments match class fields
                 // For now, just verify class exists
-                let _arg_types: Result<Vec<Type>, TypeError> = args.iter()
-                    .map(|arg| infer_expr_type(ctx, arg))
-                    .collect();
+                let _arg_types: Result<Vec<Type>, TypeError> =
+                    args.iter().map(|arg| infer_expr_type(ctx, arg)).collect();
                 Ok(Type::Named(class_name.clone()))
             } else {
                 let span = get_expr_span(expr);
@@ -402,7 +431,11 @@ fn infer_expr_type(ctx: &TypeContext, expr: &Expr) -> TypeResult<Type> {
                 })
             }
         }
-        Expr::Assign(left, right) | Expr::AddAssign(left, right) | Expr::SubAssign(left, right) | Expr::MulAssign(left, right) | Expr::DivAssign(left, right) => {
+        Expr::Assign(left, right)
+        | Expr::AddAssign(left, right)
+        | Expr::SubAssign(left, right)
+        | Expr::MulAssign(left, right)
+        | Expr::DivAssign(left, right) => {
             let _left_type = infer_expr_type(ctx, left)?;
             let right_type = infer_expr_type(ctx, right)?;
             Ok(right_type)
@@ -454,10 +487,7 @@ mod tests {
     #[test]
     fn test_infer_binary_op() {
         let ctx = TypeContext::new();
-        let expr = Expr::Add(
-            Box::new(Expr::Integer(1)),
-            Box::new(Expr::Integer(2)),
-        );
+        let expr = Expr::Add(Box::new(Expr::Integer(1)), Box::new(Expr::Integer(2)));
         assert_eq!(infer_expr_type(&ctx, &expr).unwrap(), Type::Int);
     }
 
@@ -504,7 +534,10 @@ mod tests {
         let program = parse(source).unwrap();
         let result = type_check_program(&program);
         assert!(result.is_err());
-        if let Err(TypeError::TypeMismatch { expected, found, .. }) = result {
+        if let Err(TypeError::TypeMismatch {
+            expected, found, ..
+        }) = result
+        {
             assert_eq!(expected, Type::Int);
             assert_eq!(found, Type::Str);
         } else {
@@ -527,20 +560,14 @@ mod tests {
     fn test_arithmetic_type_promotion() {
         let ctx = TypeContext::new();
         // int + float64 should promote to float64
-        let expr = Expr::Add(
-            Box::new(Expr::Integer(1)),
-            Box::new(Expr::Float(2.0)),
-        );
+        let expr = Expr::Add(Box::new(Expr::Integer(1)), Box::new(Expr::Float(2.0)));
         assert_eq!(infer_expr_type(&ctx, &expr).unwrap(), Type::Float64);
     }
 
     #[test]
     fn test_comparison_returns_bool() {
         let ctx = TypeContext::new();
-        let expr = Expr::Lt(
-            Box::new(Expr::Integer(1)),
-            Box::new(Expr::Integer(2)),
-        );
+        let expr = Expr::Lt(Box::new(Expr::Integer(1)), Box::new(Expr::Integer(2)));
         assert_eq!(infer_expr_type(&ctx, &expr).unwrap(), Type::Bool);
     }
 
@@ -577,11 +604,7 @@ mod tests {
     #[test]
     fn test_list_type_inference() {
         let ctx = TypeContext::new();
-        let expr = Expr::List(vec![
-            Expr::Integer(1),
-            Expr::Integer(2),
-            Expr::Integer(3),
-        ]);
+        let expr = Expr::List(vec![Expr::Integer(1), Expr::Integer(2), Expr::Integer(3)]);
         let result = infer_expr_type(&ctx, &expr).unwrap();
         if let Type::List(inner) = result {
             assert_eq!(*inner, Type::Int);
@@ -637,4 +660,3 @@ fn test():
         // This test verifies the function is stored
     }
 }
-

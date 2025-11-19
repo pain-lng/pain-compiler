@@ -1,7 +1,10 @@
 // Pain compiler CLI entry point
 
 use clap::{Parser, Subcommand};
-use pain_compiler::{parse, type_check_program, Interpreter, IrBuilder, CodeGenerator, MlirCodeGenerator, Formatter, ErrorFormatter, DocGenerator, Optimizer, llvm_tools};
+use pain_compiler::{
+    llvm_tools, parse, type_check_program, CodeGenerator, DocGenerator, ErrorFormatter, Formatter,
+    Interpreter, IrBuilder, MlirCodeGenerator, Optimizer,
+};
 use std::fs;
 use std::path::PathBuf;
 
@@ -78,8 +81,22 @@ fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Build { input, output, executable, target, keep_intermediates, backend } => {
-            build(&input, output.as_ref(), executable, target.as_deref(), keep_intermediates, &backend)?;
+        Commands::Build {
+            input,
+            output,
+            executable,
+            target,
+            keep_intermediates,
+            backend,
+        } => {
+            build(
+                &input,
+                output.as_ref(),
+                executable,
+                target.as_deref(),
+                keep_intermediates,
+                &backend,
+            )?;
         }
         Commands::Run { input } => {
             run(&input)?;
@@ -87,16 +104,26 @@ fn main() -> anyhow::Result<()> {
         Commands::Check { input } => {
             check(&input)?;
         }
-        Commands::Format { input, output, stdout } => {
+        Commands::Format {
+            input,
+            output,
+            stdout,
+        } => {
             format_file(&input, output.as_ref(), stdout)?;
         }
-        Commands::Doc { input, output, stdlib } => {
+        Commands::Doc {
+            input,
+            output,
+            stdlib,
+        } => {
             if stdlib {
                 generate_stdlib_doc(output.as_ref())?;
             } else if let Some(input) = input {
                 generate_doc(&input, output.as_ref())?;
             } else {
-                return Err(anyhow::anyhow!("Either --input or --stdlib must be specified"));
+                return Err(anyhow::anyhow!(
+                    "Either --input or --stdlib must be specified"
+                ));
             }
         }
     }
@@ -113,38 +140,38 @@ fn build(
     backend: &str,
 ) -> anyhow::Result<()> {
     println!("Building: {:?}", input);
-    
+
     let source = fs::read_to_string(input)?;
     let program = parse(&source).map_err(|e| anyhow::anyhow!("Parse error: {}", e))?;
-    
+
     // Type check
     if let Err(e) = type_check_program(&program) {
         let formatter = ErrorFormatter::new(&source);
         eprintln!("{}", formatter.format_error(&e));
         return Err(anyhow::anyhow!("Type check failed"));
     }
-    
+
     println!("✓ Parsed and type-checked successfully");
-    
+
     // Build IR
     let ir_builder = IrBuilder::new();
     let mut ir = ir_builder.build(&program);
-    
+
     // Optimize IR
     println!("Running optimizations...");
     ir = Optimizer::optimize(ir);
     println!("✓ Optimizations completed");
-    
+
     // Generate code based on backend
     match backend.to_lowercase().as_str() {
         "mlir" => {
             let mlir_codegen = MlirCodeGenerator::new(ir);
             let mlir_ir = mlir_codegen.generate();
-            
+
             if executable {
                 return Err(anyhow::anyhow!("MLIR backend does not support executable generation yet. Use --backend llvm for executables."));
             }
-            
+
             if let Some(output) = output {
                 println!("Output: {:?}", output);
                 fs::write(output, mlir_ir)?;
@@ -161,28 +188,26 @@ fn build(
                 println!("Using target triple: {}", detected);
                 detected
             });
-            
+
             // Generate LLVM IR
             let codegen = CodeGenerator::new(ir);
             let llvm_ir = codegen.generate_with_target(Some(&target_triple));
-            
+
             if executable {
                 // Generate executable
-                let executable_path = output
-                    .map(|p| p.to_path_buf())
-                    .unwrap_or_else(|| {
-                        // Default to input filename without extension + .exe on Windows
-                        let mut path = input.clone();
-                        path.set_extension("");
-                        #[cfg(target_os = "windows")]
-                        path.set_extension("exe");
-                        path
-                    });
-                
+                let executable_path = output.map(|p| p.to_path_buf()).unwrap_or_else(|| {
+                    // Default to input filename without extension + .exe on Windows
+                    let mut path = input.clone();
+                    path.set_extension("");
+                    #[cfg(target_os = "windows")]
+                    path.set_extension("exe");
+                    path
+                });
+
                 // Create temporary LLVM IR file
                 let llvm_ir_path = executable_path.with_extension("ll");
                 fs::write(&llvm_ir_path, llvm_ir)?;
-                
+
                 // Compile and link
                 llvm_tools::compile_to_executable(
                     &llvm_ir_path,
@@ -190,7 +215,7 @@ fn build(
                     Some(&target_triple),
                     keep_intermediates,
                 )?;
-                
+
                 println!("✓ Executable built successfully: {:?}", executable_path);
             } else {
                 // Just generate LLVM IR
@@ -205,40 +230,43 @@ fn build(
             }
         }
     }
-    
+
     Ok(())
 }
 
 fn run(input: &PathBuf) -> anyhow::Result<()> {
     let source = fs::read_to_string(input)?;
     let program = parse(&source).map_err(|e| anyhow::anyhow!("Parse error: {}", e))?;
-    
+
     // Type check
     if let Err(e) = type_check_program(&program) {
         let formatter = ErrorFormatter::new(&source);
         eprintln!("{}", formatter.format_error(&e));
         return Err(anyhow::anyhow!("Type check failed"));
     }
-    
+
     // Execute
-    let mut interpreter = Interpreter::new()
-        .map_err(|e| anyhow::anyhow!("Failed to create interpreter: {}", e))?;
-    
-    let result = interpreter.interpret(&program)
+    let mut interpreter =
+        Interpreter::new().map_err(|e| anyhow::anyhow!("Failed to create interpreter: {}", e))?;
+
+    let result = interpreter
+        .interpret(&program)
         .map_err(|e| anyhow::anyhow!("Runtime error: {:?}", e))?;
-    
+
     // Print result (for benchmarks and CLI usage)
     match result {
         pain_runtime::Value::Int(i) => println!("{}", i),
         pain_runtime::Value::Float(f) => println!("{}", f),
         pain_runtime::Value::Bool(b) => println!("{}", b),
         pain_runtime::Value::String(s) => println!("{}", s),
-        pain_runtime::Value::None => {},
+        pain_runtime::Value::None => {}
         pain_runtime::Value::Object(_) => println!("[Object]"),
         pain_runtime::Value::List(list) => {
             print!("[");
             for (i, item) in list.iter().enumerate() {
-                if i > 0 { print!(", "); }
+                if i > 0 {
+                    print!(", ");
+                }
                 match item {
                     pain_runtime::Value::Int(n) => print!("{}", n),
                     pain_runtime::Value::Float(f) => print!("{}", f),
@@ -252,7 +280,9 @@ fn run(input: &PathBuf) -> anyhow::Result<()> {
         pain_runtime::Value::Array(arr) => {
             print!("[");
             for (i, item) in arr.iter().enumerate() {
-                if i > 0 { print!(", "); }
+                if i > 0 {
+                    print!(", ");
+                }
                 match item {
                     pain_runtime::Value::Int(n) => print!("{}", n),
                     pain_runtime::Value::Float(f) => print!("{}", f),
@@ -264,37 +294,37 @@ fn run(input: &PathBuf) -> anyhow::Result<()> {
             println!("]");
         }
     }
-    
+
     Ok(())
 }
 
 fn check(input: &PathBuf) -> anyhow::Result<()> {
     println!("Checking: {:?}", input);
-    
+
     let source = fs::read_to_string(input)?;
     let program = parse(&source).map_err(|e| anyhow::anyhow!("Parse error: {}", e))?;
-    
+
     // Type check
     if let Err(e) = type_check_program(&program) {
         let formatter = ErrorFormatter::new(&source);
         eprintln!("{}", formatter.format_error(&e));
         return Err(anyhow::anyhow!("Type check failed"));
     }
-    
+
     println!("✓ All checks passed!");
-    
+
     Ok(())
 }
 
 fn format_file(input: &PathBuf, output: Option<&PathBuf>, stdout: bool) -> anyhow::Result<()> {
     println!("Formatting: {:?}", input);
-    
+
     let source = fs::read_to_string(input)?;
     let program = parse(&source).map_err(|e| anyhow::anyhow!("Parse error: {}", e))?;
-    
+
     // Format the program
     let formatted = Formatter::format(&program);
-    
+
     if stdout {
         print!("{}", formatted);
     } else if let Some(output) = output {
@@ -305,41 +335,41 @@ fn format_file(input: &PathBuf, output: Option<&PathBuf>, stdout: bool) -> anyho
         fs::write(input, formatted)?;
         println!("✓ Formatted code written to {:?}", input);
     }
-    
+
     Ok(())
 }
 
 fn generate_doc(input: &PathBuf, output: Option<&PathBuf>) -> anyhow::Result<()> {
     println!("Generating documentation: {:?}", input);
-    
+
     let source = fs::read_to_string(input)?;
     let program = parse(&source).map_err(|e| anyhow::anyhow!("Parse error: {}", e))?;
-    
+
     // Generate documentation
     let doc = DocGenerator::generate(&program);
-    
+
     if let Some(output) = output {
         fs::write(output, doc)?;
         println!("✓ Documentation written to {:?}", output);
     } else {
         print!("{}", doc);
     }
-    
+
     Ok(())
 }
 
 fn generate_stdlib_doc(output: Option<&PathBuf>) -> anyhow::Result<()> {
     println!("Generating standard library documentation");
-    
+
     // Generate stdlib documentation
     let doc = DocGenerator::generate_stdlib();
-    
+
     if let Some(output) = output {
         fs::write(output, doc)?;
         println!("✓ Standard library documentation written to {:?}", output);
     } else {
         print!("{}", doc);
     }
-    
+
     Ok(())
 }
