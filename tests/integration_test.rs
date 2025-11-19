@@ -83,12 +83,7 @@ fn test_parse_for_loop() {
 
 #[test]
 fn test_parse_class() {
-    let source = "class Point:
-    let x: int
-    let y: int
-    
-    fn new(x: int, y: int) -> Point:
-        return new Point(x, y)";
+    let source = "class Point:\n    let x: int\n    let y: int\n    fn create(x: int, y: int) -> Point:\n        return new Point(x, y)";
 
     let result = parse(source);
     assert!(result.is_ok(), "Failed to parse: {:?}", result.err());

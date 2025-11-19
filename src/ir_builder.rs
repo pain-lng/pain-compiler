@@ -18,6 +18,15 @@ pub struct IrBuilder {
 }
 
 impl IrBuilder {
+    fn block_mut<'a>(func: &'a mut IrFunction, block_id: BlockId) -> &'a mut BasicBlock {
+        let index = func
+            .blocks
+            .iter()
+            .position(|b| b.id == block_id)
+            .expect("Block not found");
+        func.blocks.get_mut(index).expect("Block not found")
+    }
+
     pub fn new() -> Self {
         Self {
             program: IrProgram::new(),
@@ -732,14 +741,16 @@ impl IrBuilder {
         // Add branch to current block
         {
             let func = &mut self.program.functions[func_id.0 as usize];
-            let current_block = &mut func.blocks[current_block_id.0 as usize];
-            current_block.terminator = Some(Instruction::Branch {
-                cond: cond_val,
-                then_block: then_block_id,
-                else_block: else_block_id,
-            });
-            current_block.successors.push(then_block_id);
-            current_block.successors.push(else_block_id);
+            {
+                let current_block = Self::block_mut(func, current_block_id);
+                current_block.terminator = Some(Instruction::Branch {
+                    cond: cond_val,
+                    then_block: then_block_id,
+                    else_block: else_block_id,
+                });
+                current_block.successors.push(then_block_id);
+                current_block.successors.push(else_block_id);
+            }
 
             func.blocks.push(then_block);
             func.blocks.push(else_block);
@@ -754,15 +765,19 @@ impl IrBuilder {
         // Jump to merge block
         {
             let func = &mut self.program.functions[func_id.0 as usize];
-            let then_block = &mut func.blocks[then_block_id.0 as usize];
-            if then_block.terminator.is_none() {
-                then_block.terminator = Some(Instruction::Jump {
-                    target: merge_block_id,
-                });
-                then_block.successors.push(merge_block_id);
+            {
+                let then_block = Self::block_mut(func, then_block_id);
+                if then_block.terminator.is_none() {
+                    then_block.terminator = Some(Instruction::Jump {
+                        target: merge_block_id,
+                    });
+                    then_block.successors.push(merge_block_id);
+                }
             }
-            let merge_block = &mut func.blocks[merge_block_id.0 as usize];
-            merge_block.predecessors.push(then_block_id);
+            {
+                let merge_block = Self::block_mut(func, merge_block_id);
+                merge_block.predecessors.push(then_block_id);
+            }
         }
 
         // Build else block
@@ -773,27 +788,35 @@ impl IrBuilder {
             }
             {
                 let func = &mut self.program.functions[func_id.0 as usize];
-                let else_block = &mut func.blocks[else_block_id.0 as usize];
-                if else_block.terminator.is_none() {
-                    else_block.terminator = Some(Instruction::Jump {
-                        target: merge_block_id,
-                    });
-                    else_block.successors.push(merge_block_id);
+                {
+                    let else_block = Self::block_mut(func, else_block_id);
+                    if else_block.terminator.is_none() {
+                        else_block.terminator = Some(Instruction::Jump {
+                            target: merge_block_id,
+                        });
+                        else_block.successors.push(merge_block_id);
+                    }
                 }
-                let merge_block = &mut func.blocks[merge_block_id.0 as usize];
-                merge_block.predecessors.push(else_block_id);
+                {
+                    let merge_block = Self::block_mut(func, merge_block_id);
+                    merge_block.predecessors.push(else_block_id);
+                }
             }
         } else {
             // No else block - jump directly to merge
             {
                 let func = &mut self.program.functions[func_id.0 as usize];
-                let else_block = &mut func.blocks[else_block_id.0 as usize];
-                else_block.terminator = Some(Instruction::Jump {
-                    target: merge_block_id,
-                });
-                else_block.successors.push(merge_block_id);
-                let merge_block = &mut func.blocks[merge_block_id.0 as usize];
-                merge_block.predecessors.push(else_block_id);
+                {
+                    let else_block = Self::block_mut(func, else_block_id);
+                    else_block.terminator = Some(Instruction::Jump {
+                        target: merge_block_id,
+                    });
+                    else_block.successors.push(merge_block_id);
+                }
+                {
+                    let merge_block = Self::block_mut(func, merge_block_id);
+                    merge_block.predecessors.push(else_block_id);
+                }
             }
         }
 
@@ -825,15 +848,19 @@ impl IrBuilder {
         // Jump from current block to header
         {
             let func = &mut self.program.functions[func_id.0 as usize];
-            let current_block = &mut func.blocks[current_block_id.0 as usize];
-            if current_block.terminator.is_none() {
-                current_block.terminator = Some(Instruction::Jump {
-                    target: header_block_id,
-                });
-                current_block.successors.push(header_block_id);
+            {
+                let current_block = Self::block_mut(func, current_block_id);
+                if current_block.terminator.is_none() {
+                    current_block.terminator = Some(Instruction::Jump {
+                        target: header_block_id,
+                    });
+                    current_block.successors.push(header_block_id);
+                }
             }
-            let header_block = &mut func.blocks[header_block_id.0 as usize];
-            header_block.predecessors.push(current_block_id);
+            {
+                let header_block = Self::block_mut(func, header_block_id);
+                header_block.predecessors.push(current_block_id);
+            }
         }
 
         // Push loop context for break/continue
@@ -845,19 +872,25 @@ impl IrBuilder {
         let cond_val = self.build_expr(cond);
         {
             let func = &mut self.program.functions[func_id.0 as usize];
-            let header_block = &mut func.blocks[header_block_id.0 as usize];
-            header_block.terminator = Some(Instruction::Branch {
-                cond: cond_val,
-                then_block: body_block_id,
-                else_block: continue_block_id,
-            });
-            header_block.successors.push(body_block_id);
-            header_block.successors.push(continue_block_id);
+            {
+                let header_block = Self::block_mut(func, header_block_id);
+                header_block.terminator = Some(Instruction::Branch {
+                    cond: cond_val,
+                    then_block: body_block_id,
+                    else_block: continue_block_id,
+                });
+                header_block.successors.push(body_block_id);
+                header_block.successors.push(continue_block_id);
+            }
 
-            let body_block = &mut func.blocks[body_block_id.0 as usize];
-            body_block.predecessors.push(header_block_id);
-            let continue_block = &mut func.blocks[continue_block_id.0 as usize];
-            continue_block.predecessors.push(header_block_id);
+            {
+                let body_block = Self::block_mut(func, body_block_id);
+                body_block.predecessors.push(header_block_id);
+            }
+            {
+                let continue_block = Self::block_mut(func, continue_block_id);
+                continue_block.predecessors.push(header_block_id);
+            }
         }
 
         // Build body block
@@ -868,13 +901,20 @@ impl IrBuilder {
         // Jump back to header (unless there's already a terminator)
         {
             let func = &mut self.program.functions[func_id.0 as usize];
-            let body_block = &mut func.blocks[body_block_id.0 as usize];
-            if body_block.terminator.is_none() {
-                body_block.terminator = Some(Instruction::Jump {
-                    target: header_block_id,
-                });
-                body_block.successors.push(header_block_id);
-                let header_block = &mut func.blocks[header_block_id.0 as usize];
+            let needs_jump = {
+                let body_block = Self::block_mut(func, body_block_id);
+                if body_block.terminator.is_none() {
+                    body_block.terminator = Some(Instruction::Jump {
+                        target: header_block_id,
+                    });
+                    body_block.successors.push(header_block_id);
+                    true
+                } else {
+                    false
+                }
+            };
+            if needs_jump {
+                let header_block = Self::block_mut(func, header_block_id);
                 header_block.predecessors.push(body_block_id);
             }
         }
@@ -919,15 +959,19 @@ impl IrBuilder {
         // Jump from current block to init
         {
             let func = &mut self.program.functions[func_id.0 as usize];
-            let current_block = &mut func.blocks[current_block_id.0 as usize];
-            if current_block.terminator.is_none() {
-                current_block.terminator = Some(Instruction::Jump {
-                    target: init_block_id,
-                });
-                current_block.successors.push(init_block_id);
+            {
+                let current_block = Self::block_mut(func, current_block_id);
+                if current_block.terminator.is_none() {
+                    current_block.terminator = Some(Instruction::Jump {
+                        target: init_block_id,
+                    });
+                    current_block.successors.push(init_block_id);
+                }
             }
-            let init_block = &mut func.blocks[init_block_id.0 as usize];
-            init_block.predecessors.push(current_block_id);
+            {
+                let init_block = Self::block_mut(func, init_block_id);
+                init_block.predecessors.push(current_block_id);
+            }
         }
 
         // Push loop context
@@ -944,13 +988,17 @@ impl IrBuilder {
         // Jump to header
         {
             let func = &mut self.program.functions[func_id.0 as usize];
-            let init_block = &mut func.blocks[init_block_id.0 as usize];
-            init_block.terminator = Some(Instruction::Jump {
-                target: header_block_id,
-            });
-            init_block.successors.push(header_block_id);
-            let header_block = &mut func.blocks[header_block_id.0 as usize];
-            header_block.predecessors.push(init_block_id);
+            {
+                let init_block = Self::block_mut(func, init_block_id);
+                init_block.terminator = Some(Instruction::Jump {
+                    target: header_block_id,
+                });
+                init_block.successors.push(header_block_id);
+            }
+            {
+                let header_block = Self::block_mut(func, header_block_id);
+                header_block.predecessors.push(init_block_id);
+            }
         }
 
         // Build header block: check condition (simplified - always true for now)
@@ -961,23 +1009,28 @@ impl IrBuilder {
         let true_val = self.program.new_value_id();
         {
             let func = &mut self.program.functions[func_id.0 as usize];
-            let header_block = &mut func.blocks[header_block_id.0 as usize];
-            // Create a constant true condition (placeholder)
-            header_block
-                .instructions
-                .push((true_val, Instruction::ConstBool { value: true }));
-            header_block.terminator = Some(Instruction::Branch {
-                cond: true_val,
-                then_block: body_block_id,
-                else_block: continue_block_id,
-            });
-            header_block.successors.push(body_block_id);
-            header_block.successors.push(continue_block_id);
+            {
+                let header_block = Self::block_mut(func, header_block_id);
+                header_block
+                    .instructions
+                    .push((true_val, Instruction::ConstBool { value: true }));
+                header_block.terminator = Some(Instruction::Branch {
+                    cond: true_val,
+                    then_block: body_block_id,
+                    else_block: continue_block_id,
+                });
+                header_block.successors.push(body_block_id);
+                header_block.successors.push(continue_block_id);
+            }
 
-            let body_block = &mut func.blocks[body_block_id.0 as usize];
-            body_block.predecessors.push(header_block_id);
-            let continue_block = &mut func.blocks[continue_block_id.0 as usize];
-            continue_block.predecessors.push(header_block_id);
+            {
+                let body_block = Self::block_mut(func, body_block_id);
+                body_block.predecessors.push(header_block_id);
+            }
+            {
+                let continue_block = Self::block_mut(func, continue_block_id);
+                continue_block.predecessors.push(header_block_id);
+            }
         }
 
         // Build body block
@@ -988,13 +1041,20 @@ impl IrBuilder {
         // Jump to increment block
         {
             let func = &mut self.program.functions[func_id.0 as usize];
-            let body_block = &mut func.blocks[body_block_id.0 as usize];
-            if body_block.terminator.is_none() {
-                body_block.terminator = Some(Instruction::Jump {
-                    target: increment_block_id,
-                });
-                body_block.successors.push(increment_block_id);
-                let increment_block = &mut func.blocks[increment_block_id.0 as usize];
+            let needs_jump = {
+                let body_block = Self::block_mut(func, body_block_id);
+                if body_block.terminator.is_none() {
+                    body_block.terminator = Some(Instruction::Jump {
+                        target: increment_block_id,
+                    });
+                    body_block.successors.push(increment_block_id);
+                    true
+                } else {
+                    false
+                }
+            };
+            if needs_jump {
+                let increment_block = Self::block_mut(func, increment_block_id);
                 increment_block.predecessors.push(body_block_id);
             }
         }
@@ -1005,13 +1065,17 @@ impl IrBuilder {
         // For now, just jump back to header
         {
             let func = &mut self.program.functions[func_id.0 as usize];
-            let increment_block = &mut func.blocks[increment_block_id.0 as usize];
-            increment_block.terminator = Some(Instruction::Jump {
-                target: header_block_id,
-            });
-            increment_block.successors.push(header_block_id);
-            let header_block = &mut func.blocks[header_block_id.0 as usize];
-            header_block.predecessors.push(increment_block_id);
+            {
+                let increment_block = Self::block_mut(func, increment_block_id);
+                increment_block.terminator = Some(Instruction::Jump {
+                    target: header_block_id,
+                });
+                increment_block.successors.push(header_block_id);
+            }
+            {
+                let header_block = Self::block_mut(func, header_block_id);
+                header_block.predecessors.push(increment_block_id);
+            }
         }
 
         // Pop loop context
@@ -1028,14 +1092,21 @@ impl IrBuilder {
             let current_block_id = self.current_block.unwrap();
 
             let func = &mut self.program.functions[func_id.0 as usize];
-            let current_block = &mut func.blocks[current_block_id.0 as usize];
-            if current_block.terminator.is_none() {
-                current_block.terminator = Some(Instruction::Jump {
-                    target: *continue_block,
-                });
-                current_block.successors.push(*continue_block);
-                let continue_block = &mut func.blocks[continue_block.0 as usize];
-                continue_block.predecessors.push(current_block_id);
+            let needs_jump = {
+                let current_block = Self::block_mut(func, current_block_id);
+                if current_block.terminator.is_none() {
+                    current_block.terminator = Some(Instruction::Jump {
+                        target: *continue_block,
+                    });
+                    current_block.successors.push(*continue_block);
+                    true
+                } else {
+                    false
+                }
+            };
+            if needs_jump {
+                let target_block = Self::block_mut(func, *continue_block);
+                target_block.predecessors.push(current_block_id);
             }
         }
     }
@@ -1046,14 +1117,21 @@ impl IrBuilder {
             let current_block_id = self.current_block.unwrap();
 
             let func = &mut self.program.functions[func_id.0 as usize];
-            let current_block = &mut func.blocks[current_block_id.0 as usize];
-            if current_block.terminator.is_none() {
-                current_block.terminator = Some(Instruction::Jump {
-                    target: *header_block,
-                });
-                current_block.successors.push(*header_block);
-                let header_block = &mut func.blocks[header_block.0 as usize];
-                header_block.predecessors.push(current_block_id);
+            let needs_jump = {
+                let current_block = Self::block_mut(func, current_block_id);
+                if current_block.terminator.is_none() {
+                    current_block.terminator = Some(Instruction::Jump {
+                        target: *header_block,
+                    });
+                    current_block.successors.push(*header_block);
+                    true
+                } else {
+                    false
+                }
+            };
+            if needs_jump {
+                let header_block_ref = Self::block_mut(func, *header_block);
+                header_block_ref.predecessors.push(current_block_id);
             }
         }
     }
