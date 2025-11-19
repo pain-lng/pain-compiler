@@ -1037,7 +1037,7 @@ mod tests {
     #[test]
     fn test_interpret_if_statement() {
         let source = "fn main():
-    if True:
+    if true:
         return 1
     else:
         return 0";

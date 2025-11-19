@@ -593,6 +593,6 @@ mod tests {
     return a + b * c";
         let program = parse(source).unwrap();
         let formatted = Formatter::format(&program);
-        assert!(formatted.contains("a + b * c"));
+        assert!(formatted.contains("a + (b * c)"));
     }
 }
