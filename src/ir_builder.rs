@@ -18,7 +18,7 @@ pub struct IrBuilder {
 }
 
 impl IrBuilder {
-    fn block_mut<'a>(func: &'a mut IrFunction, block_id: BlockId) -> &'a mut BasicBlock {
+    fn block_mut(func: &mut IrFunction, block_id: BlockId) -> &mut BasicBlock {
         let index = func
             .blocks
             .iter()
