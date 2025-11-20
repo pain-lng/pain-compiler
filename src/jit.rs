@@ -3,9 +3,9 @@
 
 use crate::codegen::CodeGenerator;
 use crate::ir::IrProgram;
-use crate::optimizations::Optimizer;
 #[cfg(feature = "jit")]
 use crate::jit_orc::OrcJitEngine;
+use crate::optimizations::Optimizer;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -138,21 +138,28 @@ impl JitEngine {
     /// Returns the result as i64 (for integer return types)
     /// This is a simplified version - in a full implementation, we'd handle different return types
     /// Note: args parameter is reserved for future use when we implement proper function calling convention
-    pub unsafe fn execute_function(&self, function_name: &str, _args: &[i64]) -> Result<i64, String> {
+    pub unsafe fn execute_function(
+        &self,
+        function_name: &str,
+        _args: &[i64],
+    ) -> Result<i64, String> {
         let jit_func = self.get_or_compile(function_name)?;
-        
+
         if let Some(code_ptr) = jit_func.code_ptr {
             // Cast function pointer to callable function
             // This assumes the function signature matches (i64, ...) -> i64
             type JitFunctionPtr = unsafe extern "C" fn() -> i64;
             let func: JitFunctionPtr = std::mem::transmute(code_ptr);
-            
+
             // Call the function
             // Note: This is simplified - in reality, we need to handle different signatures
             // For now, we assume functions take no arguments and return i64
             Ok(func())
         } else {
-            Err(format!("Function '{}' is not compiled to machine code. JIT compilation may have failed.", function_name))
+            Err(format!(
+                "Function '{}' is not compiled to machine code. JIT compilation may have failed.",
+                function_name
+            ))
         }
     }
 
@@ -164,10 +171,10 @@ impl JitEngine {
             let mut cache = self.function_cache.borrow_mut();
             cache.remove(function_name);
         }
-        
+
         // Recompile with optimizations
         self.compile_function(function_name)?;
-        
+
         Ok(())
     }
 }
@@ -280,14 +287,14 @@ fn main() -> int:
         let ir = ir_builder.build(&program);
 
         let jit = JitEngine::new(ir);
-        
+
         // Compile function
         let func1 = jit.compile_function("add").unwrap();
         assert_eq!(func1.name, "add");
-        
+
         // Trigger OSR replacement
         jit.osr_replace("add").unwrap();
-        
+
         // Function should be recompiled
         let func2 = jit.compile_function("add").unwrap();
         assert_eq!(func2.name, "add");
