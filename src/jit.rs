@@ -138,6 +138,14 @@ impl JitEngine {
     /// Returns the result as i64 (for integer return types)
     /// This is a simplified version - in a full implementation, we'd handle different return types
     /// Note: args parameter is reserved for future use when we implement proper function calling convention
+    ///
+    /// # Safety
+    ///
+    /// This function is unsafe because it calls machine code compiled at runtime.
+    /// The caller must ensure that:
+    /// - The function has been successfully compiled via `compile_function` or `get_or_compile`
+    /// - The function signature matches the expected signature (currently assumes no args, returns i64)
+    /// - The function pointer is valid and points to executable code
     pub unsafe fn execute_function(
         &self,
         function_name: &str,
