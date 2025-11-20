@@ -14,6 +14,8 @@ pub struct CodeGenerator {
     next_label: u32,
     next_string_id: u32,
     current_function: Option<FunctionId>, // Track current function for return type
+    #[allow(dead_code)]
+    loop_headers: HashSet<BlockId>, // Track loop headers for vectorization hints
 }
 
 impl CodeGenerator {
@@ -32,7 +34,7 @@ impl CodeGenerator {
                 }
             }
         }
-        
+
         Self {
             ir,
             llvm_code: String::new(),
@@ -214,7 +216,11 @@ impl CodeGenerator {
         ));
 
         // Add vectorization hints if function has @vectorize attribute
-        if func.attributes.iter().any(|a| a == "@vectorize" || a == "vectorize") {
+        if func
+            .attributes
+            .iter()
+            .any(|a| a == "@vectorize" || a == "vectorize")
+        {
             self.llvm_code.push_str("  ; Vectorization enabled\n");
         }
 
@@ -669,10 +675,8 @@ impl CodeGenerator {
                     // Date/time functions
                     "now" => {
                         // now() -> float64
-                        self.llvm_code.push_str(&format!(
-                            "  {} = call double @now()\n",
-                            result
-                        ));
+                        self.llvm_code
+                            .push_str(&format!("  {} = call double @now()\n", result));
                     }
                     "time_format" => {
                         // time_format(timestamp: float64, format: str) -> str
@@ -740,7 +744,8 @@ impl CodeGenerator {
                         }
                     }
                     // String functions (already declared, generate calls)
-                    "len" | "concat" | "substring" | "contains" | "starts_with" | "ends_with" | "trim" | "to_int" | "to_float" | "to_string" => {
+                    "len" | "concat" | "substring" | "contains" | "starts_with" | "ends_with"
+                    | "trim" | "to_int" | "to_float" | "to_string" => {
                         // Get function signature from stdlib
                         let stdlib_funcs = get_stdlib_functions();
                         if let Some(func) = stdlib_funcs.iter().find(|f| f.name == *name) {
@@ -750,7 +755,7 @@ impl CodeGenerator {
                                 .map(|(_, ty)| self.llvm_type_from_ast(ty))
                                 .collect();
                             let ret_type = self.llvm_type_from_ast(&func.return_type);
-                            
+
                             if ret_type == "void" {
                                 self.llvm_code.push_str(&format!(
                                     "  call void @{}({})\n",

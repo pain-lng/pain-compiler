@@ -801,22 +801,26 @@ impl Optimizer {
 
         for func in &mut new_ir.functions {
             let loops = Self::find_loops(func);
-            
+
             for (header_id, body_blocks) in loops {
                 // Try to determine loop iteration count
-                if let Some(iteration_count) = Self::estimate_loop_iterations(func, header_id, &body_blocks) {
+                if let Some(iteration_count) =
+                    Self::estimate_loop_iterations(func, header_id, &body_blocks)
+                {
                     // Only unroll small loops (<= 8 iterations) to avoid code bloat
                     if iteration_count > 0 && iteration_count <= 8 {
                         // Check if loop body is small enough to unroll
-                        let body_size: usize = body_blocks.iter()
+                        let body_size: usize = body_blocks
+                            .iter()
                             .map(|&bid| {
-                                func.blocks.iter()
+                                func.blocks
+                                    .iter()
                                     .find(|b| b.id == bid)
                                     .map(|b| b.instructions.len())
                                     .unwrap_or(0)
                             })
                             .sum();
-                        
+
                         // Unroll if total unrolled size is reasonable (< 200 instructions)
                         if body_size * iteration_count < 200 {
                             if Self::unroll_loop(func, header_id, &body_blocks, iteration_count) {
@@ -836,44 +840,42 @@ impl Optimizer {
     fn estimate_loop_iterations(
         func: &IrFunction,
         header_id: BlockId,
-        body_blocks: &[BlockId],
+        _body_blocks: &[BlockId],
     ) -> Option<usize> {
         // Try to find a constant loop bound
         // Look for patterns like: for i in 0..N where N is constant
         // This is a simplified heuristic - in practice, would need more sophisticated analysis
-        
+
         if let Some(header) = func.blocks.iter().find(|b| b.id == header_id) {
             // Look for constant comparisons in the header
             for (_value_id, instr) in &header.instructions {
                 if let Instruction::Lt { lhs, rhs } | Instruction::Le { lhs, rhs } = instr {
-                    // Check if one operand is a constant
-                    if let Some(lhs_const) = Self::get_constant_value(func, *lhs) {
-                        if let Some(rhs_const) = Self::get_constant_value(func, *rhs) {
+                    // Check if operands are constants
+                    if let Some(lhs_val) = Self::get_constant_value(func, *lhs) {
+                        if let Some(rhs_val) = Self::get_constant_value(func, *rhs) {
                             // Both are constants - calculate difference
-                            if let (Some(lhs_val), Some(rhs_val)) = (lhs_const.as_i64(), rhs_const.as_i64()) {
-                                let diff = (rhs_val - lhs_val).abs() as usize;
-                                if diff > 0 && diff <= 8 {
-                                    return Some(diff);
-                                }
+                            let diff = (rhs_val - lhs_val).abs() as usize;
+                            if diff > 0 && diff <= 8 {
+                                return Some(diff);
                             }
                         }
                     }
                 }
             }
         }
-        
+
         None
     }
 
     /// Get constant value from a ValueId (if it's a constant)
-    fn get_constant_value(func: &IrFunction, value_id: ValueId) -> Option<ConstantValue> {
+    fn get_constant_value(func: &IrFunction, value_id: ValueId) -> Option<i64> {
         for block in &func.blocks {
             for (vid, instr) in &block.instructions {
                 if *vid == value_id {
                     return match instr {
-                        Instruction::ConstInt { value } => Some(ConstantValue::Int(*value)),
-                        Instruction::ConstFloat { value } => Some(ConstantValue::Float(*value)),
-                        Instruction::ConstBool { value } => Some(ConstantValue::Bool(*value)),
+                        Instruction::ConstInt { value } => Some(*value),
+                        Instruction::ConstFloat { value } => Some(*value as i64),
+                        Instruction::ConstBool { value } => Some(if *value { 1 } else { 0 }),
                         _ => None,
                     };
                 }
@@ -884,10 +886,10 @@ impl Optimizer {
 
     /// Unroll a loop by the specified number of iterations
     fn unroll_loop(
-        func: &mut IrFunction,
-        header_id: BlockId,
-        body_blocks: &[BlockId],
-        iterations: usize,
+        _func: &mut IrFunction,
+        _header_id: BlockId,
+        _body_blocks: &[BlockId],
+        _iterations: usize,
     ) -> bool {
         // This is a simplified implementation
         // In practice, would need to handle:
@@ -895,27 +897,10 @@ impl Optimizer {
         // - Loop exit conditions
         // - Phi nodes
         // - Control flow
-        
+
         // For now, return false to indicate we couldn't unroll
         // This is a placeholder for future implementation
         false
-    }
-
-    /// Helper enum for constant values
-    enum ConstantValue {
-        Int(i64),
-        Float(f64),
-        Bool(bool),
-    }
-
-    impl ConstantValue {
-        fn as_i64(&self) -> Option<i64> {
-            match self {
-                ConstantValue::Int(v) => Some(*v),
-                ConstantValue::Float(v) => Some(*v as i64),
-                ConstantValue::Bool(v) => Some(if *v { 1 } else { 0 }),
-            }
-        }
     }
 
     /// Find all loops in a function (returns (header_block_id, body_block_ids))
@@ -1091,14 +1076,13 @@ impl Optimizer {
             usize, // complexity score
         );
         let mut inline_candidates: HashMap<String, InlineCandidate> = HashMap::new();
-        
+
         for func in &new_ir.functions {
-            let total_instructions: usize =
-                func.blocks.iter().map(|b| b.instructions.len()).sum();
-            
+            let total_instructions: usize = func.blocks.iter().map(|b| b.instructions.len()).sum();
+
             // Calculate complexity score (higher = more complex)
             let complexity = Self::calculate_function_complexity(func);
-            
+
             // Check if function should be inlined
             let should_inline = if func
                 .attributes
@@ -1110,7 +1094,7 @@ impl Optimizer {
             } else {
                 // Automatic inlining heuristics
                 let call_count = call_counts.get(&func.name).copied().unwrap_or(0);
-                
+
                 // Inline if:
                 // - Very small functions (< 5 instructions) regardless of calls
                 // - Small functions (< 15 instructions) called once or twice
@@ -1144,7 +1128,7 @@ impl Optimizer {
             let mut changed = true;
             let mut inline_count = 0; // Limit inlining per function to avoid code bloat
             const MAX_INLINES_PER_FUNCTION: usize = 10;
-            
+
             while changed && inline_count < MAX_INLINES_PER_FUNCTION {
                 changed = false;
 
@@ -1203,7 +1187,7 @@ impl Optimizer {
     /// Factors: loops, function calls, branches, memory operations
     fn calculate_function_complexity(func: &IrFunction) -> usize {
         let mut complexity = 0;
-        
+
         for block in &func.blocks {
             for (_value_id, instr) in &block.instructions {
                 match instr {
@@ -1214,7 +1198,7 @@ impl Optimizer {
                     _ => {}
                 }
             }
-            
+
             // Branches add complexity
             if let Some(terminator) = &block.terminator {
                 match terminator {
@@ -1225,7 +1209,7 @@ impl Optimizer {
                 }
             }
         }
-        
+
         // Loops add significant complexity (detected by back edges)
         let mut has_loop = false;
         for block in &func.blocks {
@@ -1243,7 +1227,7 @@ impl Optimizer {
         if has_loop {
             complexity += 10;
         }
-        
+
         complexity
     }
 

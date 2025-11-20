@@ -45,9 +45,9 @@ pub fn parse_with_recovery(source: &str) -> (Result<Program, Vec<ParseError>>, V
 
     let mut parser = Parser::new(&tokens, source);
     let (program, parse_errors) = parser.parse_program_with_recovery();
-    
+
     let all_errors = [lexer_errors, parse_errors].concat();
-    
+
     if all_errors.is_empty() {
         (program, vec![])
     } else {
@@ -170,7 +170,9 @@ impl<'a> Parser<'a> {
     }
 
     // Parse program with error recovery
-    fn parse_program_with_recovery(&mut self) -> (Result<Program, Vec<ParseError>>, Vec<ParseError>) {
+    fn parse_program_with_recovery(
+        &mut self,
+    ) -> (Result<Program, Vec<ParseError>>, Vec<ParseError>) {
         let start_span = if let Some(first) = self.tokens.first() {
             first.span
         } else {

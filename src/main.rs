@@ -3,8 +3,9 @@
 use clap::{Parser, Subcommand};
 use pain_compiler::interpreter::Environment;
 use pain_compiler::{
-    llvm_tools, parse, type_check_program_with_context, CodeGenerator, DocGenerator, ErrorFormatter, Formatter, WarningCollector,
-    Interpreter, IrBuilder, Item, MlirCodeGenerator, Optimizer, TypeContext,
+    llvm_tools, parse, type_check_program_with_context, CodeGenerator, DocGenerator,
+    ErrorFormatter, Formatter, Interpreter, IrBuilder, Item, MlirCodeGenerator, Optimizer,
+    TypeContext, WarningCollector,
 };
 use rustyline::error::ReadlineError;
 use rustyline::DefaultEditor;
@@ -166,7 +167,7 @@ fn build(
             }
         }
     }
-    
+
     if let Err(e) = type_check_program_with_context(&program, &mut ctx) {
         let formatter = ErrorFormatter::new(&source).with_context(&ctx);
         eprintln!("{}", formatter.format_error(&e));
@@ -276,7 +277,7 @@ fn run(input: &PathBuf) -> anyhow::Result<()> {
             }
         }
     }
-    
+
     if let Err(e) = type_check_program_with_context(&program, &mut ctx) {
         let formatter = ErrorFormatter::new(&source).with_context(&ctx);
         eprintln!("{}", formatter.format_error(&e));
@@ -364,7 +365,7 @@ fn check(input: &PathBuf) -> anyhow::Result<()> {
             }
         }
     }
-    
+
     if let Err(e) = type_check_program_with_context(&program, &mut ctx) {
         let formatter = ErrorFormatter::new(&source).with_context(&ctx);
         eprintln!("{}", formatter.format_error(&e));
@@ -563,7 +564,7 @@ fn repl() -> anyhow::Result<()> {
                                 }
                             }
                         }
-                        
+
                         if let Err(e) = type_check_program_with_context(&program, &mut ctx) {
                             let formatter = ErrorFormatter::new(&buffer).with_context(&ctx);
                             eprintln!("{}", formatter.format_error(&e));
@@ -608,8 +609,10 @@ fn repl() -> anyhow::Result<()> {
                                         }
                                     }
                                 }
-                                
-                                if let Err(e) = type_check_program_with_context(&wrapped_program, &mut ctx) {
+
+                                if let Err(e) =
+                                    type_check_program_with_context(&wrapped_program, &mut ctx)
+                                {
                                     let formatter = ErrorFormatter::new(&buffer).with_context(&ctx);
                                     eprintln!("{}", formatter.format_error(&e));
                                     buffer.clear();

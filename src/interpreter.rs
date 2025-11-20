@@ -3,11 +3,11 @@
 use crate::ast::{Class, Expr, Function, Item, Program, Statement, Type};
 use crate::stdlib::is_stdlib_function;
 use pain_runtime::{ClassInstance, Value};
+use regex::Regex;
+use serde_json;
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
-use regex::Regex;
-use serde_json;
 
 /// Control flow result
 enum ControlFlow {
@@ -1058,9 +1058,9 @@ impl Interpreter {
                     match path_strings {
                         Ok(strings) => {
                             let path = Path::new(&strings[0]);
-                            let joined = strings[1..].iter().fold(path.to_path_buf(), |acc, p| {
-                                acc.join(p)
-                            });
+                            let joined = strings[1..]
+                                .iter()
+                                .fold(path.to_path_buf(), |acc, p| acc.join(p));
                             Ok(Value::String(joined.to_string_lossy().to_string()))
                         }
                         Err(_) => Err("path_join requires list of strings"),
@@ -1132,8 +1132,8 @@ impl Interpreter {
                 if let (Value::Float(timestamp), Value::String(format_str)) = (&args[0], &args[1]) {
                     use std::time::{Duration, UNIX_EPOCH};
                     let secs = timestamp.trunc() as u64;
-                    let nanos = ((timestamp.fract() * 1_000_000_000.0) as u32);
-                    let datetime = UNIX_EPOCH + Duration::new(secs, nanos);
+                    let nanos = (timestamp.fract() * 1_000_000_000.0) as u32;
+                    let _datetime = UNIX_EPOCH + Duration::new(secs, nanos);
                     // Simple format implementation - supports %Y, %m, %d, %H, %M, %S
                     // For full implementation, would use chrono crate
                     let formatted = format_str
@@ -1208,7 +1208,9 @@ impl Interpreter {
                     (&args[0], &args[1], &args[2])
                 {
                     match Regex::new(pattern) {
-                        Ok(re) => Ok(Value::String(re.replace_all(text, replacement.as_str()).to_string())),
+                        Ok(re) => Ok(Value::String(
+                            re.replace_all(text, replacement.as_str()).to_string(),
+                        )),
                         Err(_) => Err("Invalid regex pattern"),
                     }
                 } else {
@@ -1234,12 +1236,10 @@ impl Interpreter {
                     return Err("json_stringify requires one argument");
                 }
                 match pain_value_to_json_value(&args[0]) {
-                    Ok(json_value) => {
-                        match serde_json::to_string(&json_value) {
-                            Ok(s) => Ok(Value::String(s)),
-                            Err(_) => Err("Failed to stringify value"),
-                        }
-                    }
+                    Ok(json_value) => match serde_json::to_string(&json_value) {
+                        Ok(s) => Ok(Value::String(s)),
+                        Err(_) => Err("Failed to stringify value"),
+                    },
                     Err(e) => Err(e),
                 }
             }
@@ -1307,7 +1307,11 @@ fn json_value_to_pain_value(json: &serde_json::Value) -> Value {
             // In the future, we might want a proper Map type
             let mut pairs = Vec::new();
             for (key, value) in obj {
-                pairs.push(Value::String(format!("{}: {}", key, json_value_to_string(value))));
+                pairs.push(Value::String(format!(
+                    "{}: {}",
+                    key,
+                    json_value_to_string(value)
+                )));
             }
             Value::List(pairs)
         }
@@ -1329,27 +1333,19 @@ fn pain_value_to_json_value(value: &Value) -> Result<serde_json::Value, &'static
     match value {
         Value::None => Ok(serde_json::Value::Null),
         Value::Bool(b) => Ok(serde_json::Value::Bool(*b)),
-        Value::Int(i) => Ok(serde_json::Value::Number(
-            serde_json::Number::from(*i)
-        )),
-        Value::Float(f) => {
-            serde_json::Number::from_f64(*f)
-                .map(serde_json::Value::Number)
-                .ok_or("Invalid float value")
-        }
+        Value::Int(i) => Ok(serde_json::Value::Number(serde_json::Number::from(*i))),
+        Value::Float(f) => serde_json::Number::from_f64(*f)
+            .map(serde_json::Value::Number)
+            .ok_or("Invalid float value"),
         Value::String(s) => Ok(serde_json::Value::String(s.clone())),
         Value::List(list) => {
-            let json_array: Result<Vec<serde_json::Value>, _> = list
-                .iter()
-                .map(pain_value_to_json_value)
-                .collect();
+            let json_array: Result<Vec<serde_json::Value>, _> =
+                list.iter().map(pain_value_to_json_value).collect();
             json_array.map(serde_json::Value::Array)
         }
         Value::Array(arr) => {
-            let json_array: Result<Vec<serde_json::Value>, _> = arr
-                .iter()
-                .map(pain_value_to_json_value)
-                .collect();
+            let json_array: Result<Vec<serde_json::Value>, _> =
+                arr.iter().map(pain_value_to_json_value).collect();
             json_array.map(serde_json::Value::Array)
         }
         Value::Object(_) => Err("Objects cannot be converted to JSON yet"),

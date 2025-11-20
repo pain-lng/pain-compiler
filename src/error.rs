@@ -44,7 +44,11 @@ fn levenshtein_distance(s1: &str, s2: &str) -> usize {
 
     for i in 1..=n {
         for j in 1..=m {
-            let cost = if s1_chars[i - 1] == s2_chars[j - 1] { 0 } else { 1 };
+            let cost = if s1_chars[i - 1] == s2_chars[j - 1] {
+                0
+            } else {
+                1
+            };
             dp[i][j] = (dp[i - 1][j] + 1)
                 .min(dp[i][j - 1] + 1)
                 .min(dp[i - 1][j - 1] + cost);
@@ -67,7 +71,7 @@ fn find_similar_names(name: &str, candidates: &[String], max_distance: usize) ->
             }
         })
         .collect();
-    
+
     matches.sort_by_key(|(_, dist)| *dist);
     matches.into_iter().take(3).map(|(name, _)| name).collect()
 }
@@ -90,18 +94,19 @@ impl<'a> ErrorFormatter<'a> {
         match error {
             TypeError::UndefinedVariable { name, span } => {
                 let mut message = format!("error: undefined variable `{}`", name);
-                
+
                 // Add suggestion if we have context
                 if let Some(ctx) = self.type_context {
                     let mut candidates = ctx.get_variable_names();
                     candidates.extend(ctx.get_function_names());
-                    
+
                     let suggestions = find_similar_names(name, &candidates, 3);
                     if !suggestions.is_empty() {
-                        message.push_str(&format!("\n     help: did you mean `{}`?", suggestions[0]));
+                        message
+                            .push_str(&format!("\n     help: did you mean `{}`?", suggestions[0]));
                     }
                 }
-                
+
                 self.format_with_span(&message, *span)
             }
             TypeError::TypeMismatch {
@@ -115,7 +120,7 @@ impl<'a> ErrorFormatter<'a> {
                     "error: type mismatch: expected `{}`, found `{}`",
                     expected_str, found_str
                 );
-                
+
                 // Add helpful suggestions for common type mismatches
                 match (expected_str.as_str(), found_str.as_str()) {
                     ("int", "str") => {
@@ -141,7 +146,7 @@ impl<'a> ErrorFormatter<'a> {
                     }
                     _ => {}
                 }
-                
+
                 self.format_with_span(&message, *span)
             }
             TypeError::CannotInferType { message, span } => {
@@ -162,21 +167,26 @@ impl<'a> ErrorFormatter<'a> {
                     "error: invalid operation `{}` for types `{}`{}",
                     op, left_str, right_str
                 );
-                
+
                 // Add helpful suggestions for invalid operations
                 match op.as_str() {
                     "arithmetic" => {
                         message.push_str("\n     help: arithmetic operations require numeric types (int, float32, float64)");
                     }
                     "indexing" => {
-                        message.push_str(&format!("\n     help: `{}` is not indexable. Use list, array, or map types", left_str));
+                        message.push_str(&format!(
+                            "\n     help: `{}` is not indexable. Use list, array, or map types",
+                            left_str
+                        ));
                     }
                     "negation" => {
-                        message.push_str("\n     help: negation requires a numeric type (int, float32, float64)");
+                        message.push_str(
+                            "\n     help: negation requires a numeric type (int, float32, float64)",
+                        );
                     }
                     _ => {}
                 }
-                
+
                 self.format_with_span(&message, *span)
             }
         }
@@ -184,14 +194,14 @@ impl<'a> ErrorFormatter<'a> {
 
     pub fn format_parse_error(&self, error: &ParseError) -> String {
         let mut message = format!("error: {}", error.message);
-        
+
         if let Some(expected) = &error.expected {
             message.push_str(&format!("\n     expected: {}", expected));
         }
         if let Some(found) = &error.found {
             message.push_str(&format!("\n     found: {}", found));
         }
-        
+
         self.format_with_span(&message, error.span)
     }
 
@@ -201,7 +211,12 @@ impl<'a> ErrorFormatter<'a> {
         let column = span.column();
 
         // Error message header
-        output.push_str(&format!("error:{}:{}: {}\n", line, column, message.split('\n').next().unwrap_or(message)));
+        output.push_str(&format!(
+            "error:{}:{}: {}\n",
+            line,
+            column,
+            message.split('\n').next().unwrap_or(message)
+        ));
 
         // Get context lines (more context for better readability)
         let context_lines = self.tracker.get_context(line, 3);
@@ -242,7 +257,11 @@ impl<'a> ErrorFormatter<'a> {
         }
 
         // Add help lines if present in message
-        let help_lines: Vec<&str> = message.lines().skip(1).filter(|l| l.trim().starts_with("help:")).collect();
+        let help_lines: Vec<&str> = message
+            .lines()
+            .skip(1)
+            .filter(|l| l.trim().starts_with("help:"))
+            .collect();
         if !help_lines.is_empty() {
             output.push_str("\n");
             for help in help_lines {
@@ -293,9 +312,7 @@ impl<'a> ErrorFormatter<'a> {
             Warning::DeadCode { span, reason } => {
                 (format!("warning: dead code: {}", reason), *span)
             }
-            Warning::UnreachableCode { span } => {
-                ("warning: unreachable code".to_string(), *span)
-            }
+            Warning::UnreachableCode { span } => ("warning: unreachable code".to_string(), *span),
         };
 
         self.format_warning_with_span(&message, span)

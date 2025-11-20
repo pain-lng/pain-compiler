@@ -13,21 +13,10 @@ fn get_expr_span(_expr: &Expr) -> Option<Span> {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Warning {
-    UnusedVariable {
-        name: String,
-        span: Span,
-    },
-    UnusedFunction {
-        name: String,
-        span: Span,
-    },
-    DeadCode {
-        span: Span,
-        reason: String,
-    },
-    UnreachableCode {
-        span: Span,
-    },
+    UnusedVariable { name: String, span: Span },
+    UnusedFunction { name: String, span: Span },
+    DeadCode { span: Span, reason: String },
+    UnreachableCode { span: Span },
 }
 
 pub struct WarningCollector {
@@ -70,10 +59,7 @@ impl WarningCollector {
         // Check for unused functions (except main)
         for (name, span) in defined_functions {
             if !called_functions.contains(&name) && name != "main" {
-                self.warnings.push(Warning::UnusedFunction {
-                    name,
-                    span,
-                });
+                self.warnings.push(Warning::UnusedFunction { name, span });
             }
         }
     }
@@ -103,7 +89,12 @@ impl WarningCollector {
             if !used_vars.contains(name) {
                 // Find the span where variable was defined
                 for stmt in &func.body {
-                    if let Statement::Let { name: var_name, init, .. } = stmt {
+                    if let Statement::Let {
+                        name: var_name,
+                        init,
+                        ..
+                    } = stmt
+                    {
                         if var_name == name {
                             // Use span from init expression or function span as fallback
                             let span = get_expr_span(init).unwrap_or(func.span);
@@ -148,7 +139,13 @@ impl WarningCollector {
                 }
                 if let Some(else_body) = else_ {
                     for s in else_body {
-                        self.check_statement(s, used_vars, defined_vars, has_return, called_functions);
+                        self.check_statement(
+                            s,
+                            used_vars,
+                            defined_vars,
+                            has_return,
+                            called_functions,
+                        );
                     }
                 }
             }
@@ -242,4 +239,3 @@ impl Default for WarningCollector {
         Self::new()
     }
 }
-

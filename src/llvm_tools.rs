@@ -209,8 +209,10 @@ fn compile_stdlib_runtime(object_path: &Path, target_triple: Option<&str>) -> io
     // Find stdlib_runtime.c in the source directory
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR")
         .map_err(|_| io::Error::new(io::ErrorKind::NotFound, "CARGO_MANIFEST_DIR not set"))?;
-    let runtime_c_path = Path::new(&manifest_dir).join("src").join("stdlib_runtime.c");
-    
+    let runtime_c_path = Path::new(&manifest_dir)
+        .join("src")
+        .join("stdlib_runtime.c");
+
     if !runtime_c_path.exists() {
         // If runtime file doesn't exist, skip compilation
         return Ok(());
@@ -218,18 +220,18 @@ fn compile_stdlib_runtime(object_path: &Path, target_triple: Option<&str>) -> io
 
     let compiler = find_llvm_compiler()?;
     let mut cmd = Command::new(&compiler);
-    
+
     cmd.arg("-c");
     cmd.arg("-o").arg(object_path);
-    
+
     if let Some(triple) = target_triple {
         cmd.arg("-target").arg(triple);
     }
-    
+
     cmd.arg(&runtime_c_path);
-    
+
     let output = cmd.output()?;
-    
+
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(io::Error::other(format!(
@@ -237,7 +239,7 @@ fn compile_stdlib_runtime(object_path: &Path, target_triple: Option<&str>) -> io
             stderr
         )));
     }
-    
+
     Ok(())
 }
 
@@ -265,7 +267,9 @@ pub fn compile_to_executable(
         // Note: In release builds, CARGO_MANIFEST_DIR might not be available
         // So we try to find the file relative to the executable or skip it
         if let Ok(manifest_dir) = std::env::var("CARGO_MANIFEST_DIR") {
-            let runtime_c_path = Path::new(&manifest_dir).join("src").join("stdlib_runtime.c");
+            let runtime_c_path = Path::new(&manifest_dir)
+                .join("src")
+                .join("stdlib_runtime.c");
             if runtime_c_path.exists() {
                 cmd.arg(&runtime_c_path);
             }
@@ -311,7 +315,11 @@ pub fn compile_to_executable(
 
     // Step 2: Link object files to executable
     println!("Linking object files to executable...");
-    link_objects_to_executable(&[&object_path, &runtime_object_path], executable_path, target_triple)?;
+    link_objects_to_executable(
+        &[&object_path, &runtime_object_path],
+        executable_path,
+        target_triple,
+    )?;
     println!("✓ Executable generated: {:?}", executable_path);
 
     // Clean up intermediate files if not keeping them
