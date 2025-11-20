@@ -3,8 +3,8 @@
 use clap::{Parser, Subcommand};
 use pain_compiler::interpreter::Environment;
 use pain_compiler::{
-    llvm_tools, parse, type_check_program, CodeGenerator, DocGenerator, ErrorFormatter, Formatter,
-    Interpreter, IrBuilder, MlirCodeGenerator, Optimizer,
+    llvm_tools, parse, type_check_program_with_context, CodeGenerator, DocGenerator, ErrorFormatter, Formatter, WarningCollector,
+    Interpreter, IrBuilder, Item, MlirCodeGenerator, Optimizer, TypeContext,
 };
 use rustyline::error::ReadlineError;
 use rustyline::DefaultEditor;
@@ -14,6 +14,7 @@ use std::path::PathBuf;
 #[derive(Parser)]
 #[command(name = "pain")]
 #[command(about = "Pain language compiler", long_about = None)]
+#[command(version)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -153,8 +154,21 @@ fn build(
     let program = parse(&source).map_err(|e| anyhow::anyhow!("Parse error: {}", e))?;
 
     // Type check
-    if let Err(e) = type_check_program(&program) {
-        let formatter = ErrorFormatter::new(&source);
+    let mut ctx = TypeContext::new();
+    // Build context first (first pass)
+    for item in &program.items {
+        match item {
+            Item::Function(func) => {
+                ctx.add_function(func.name.clone(), func.clone());
+            }
+            Item::Class(class) => {
+                ctx.add_class(class.name.clone(), class.clone());
+            }
+        }
+    }
+    
+    if let Err(e) = type_check_program_with_context(&program, &mut ctx) {
+        let formatter = ErrorFormatter::new(&source).with_context(&ctx);
         eprintln!("{}", formatter.format_error(&e));
         return Err(anyhow::anyhow!("Type check failed"));
     }
@@ -250,10 +264,32 @@ fn run(input: &PathBuf) -> anyhow::Result<()> {
     let program = parse(&source).map_err(|e| anyhow::anyhow!("Parse error: {}", e))?;
 
     // Type check
-    if let Err(e) = type_check_program(&program) {
-        let formatter = ErrorFormatter::new(&source);
+    let mut ctx = TypeContext::new();
+    // Build context first (first pass)
+    for item in &program.items {
+        match item {
+            Item::Function(func) => {
+                ctx.add_function(func.name.clone(), func.clone());
+            }
+            Item::Class(class) => {
+                ctx.add_class(class.name.clone(), class.clone());
+            }
+        }
+    }
+    
+    if let Err(e) = type_check_program_with_context(&program, &mut ctx) {
+        let formatter = ErrorFormatter::new(&source).with_context(&ctx);
         eprintln!("{}", formatter.format_error(&e));
         return Err(anyhow::anyhow!("Type check failed"));
+    }
+
+    // Collect and display warnings
+    let warnings = WarningCollector::collect_warnings(&program, &ctx);
+    if !warnings.is_empty() {
+        let formatter = ErrorFormatter::new(&source);
+        for warning in &warnings {
+            eprintln!("{}", formatter.format_warning(warning));
+        }
     }
 
     // Execute
@@ -316,8 +352,21 @@ fn check(input: &PathBuf) -> anyhow::Result<()> {
     let program = parse(&source).map_err(|e| anyhow::anyhow!("Parse error: {}", e))?;
 
     // Type check
-    if let Err(e) = type_check_program(&program) {
-        let formatter = ErrorFormatter::new(&source);
+    let mut ctx = TypeContext::new();
+    // Build context first (first pass)
+    for item in &program.items {
+        match item {
+            Item::Function(func) => {
+                ctx.add_function(func.name.clone(), func.clone());
+            }
+            Item::Class(class) => {
+                ctx.add_class(class.name.clone(), class.clone());
+            }
+        }
+    }
+    
+    if let Err(e) = type_check_program_with_context(&program, &mut ctx) {
+        let formatter = ErrorFormatter::new(&source).with_context(&ctx);
         eprintln!("{}", formatter.format_error(&e));
         return Err(anyhow::anyhow!("Type check failed"));
     }
@@ -502,8 +551,21 @@ fn repl() -> anyhow::Result<()> {
                 match parse(&buffer) {
                     Ok(program) => {
                         // Type check
-                        if let Err(e) = type_check_program(&program) {
-                            let formatter = ErrorFormatter::new(&buffer);
+                        // Build context for error messages
+                        let mut ctx = TypeContext::new();
+                        for item in &program.items {
+                            match item {
+                                Item::Function(func) => {
+                                    ctx.add_function(func.name.clone(), func.clone());
+                                }
+                                Item::Class(class) => {
+                                    ctx.add_class(class.name.clone(), class.clone());
+                                }
+                            }
+                        }
+                        
+                        if let Err(e) = type_check_program_with_context(&program, &mut ctx) {
+                            let formatter = ErrorFormatter::new(&buffer).with_context(&ctx);
                             eprintln!("{}", formatter.format_error(&e));
                             buffer.clear();
                             line_count = 0;
@@ -513,11 +575,11 @@ fn repl() -> anyhow::Result<()> {
                         // Register functions and classes, execute if possible
                         for item in &program.items {
                             match item {
-                                pain_compiler::ast::Item::Function(func) => {
+                                Item::Function(func) => {
                                     env.add_function(func.clone());
                                     println!("✓ Function '{}' defined", func.name);
                                 }
-                                pain_compiler::ast::Item::Class(class) => {
+                                Item::Class(class) => {
                                     env.add_class(class.clone());
                                     println!("✓ Class '{}' defined", class.name);
                                 }
@@ -534,8 +596,21 @@ fn repl() -> anyhow::Result<()> {
                         match parse(&wrapped) {
                             Ok(wrapped_program) => {
                                 // Type check
-                                if let Err(e) = type_check_program(&wrapped_program) {
-                                    let formatter = ErrorFormatter::new(&buffer);
+                                // Build context for error messages
+                                let mut ctx = TypeContext::new();
+                                for item in &wrapped_program.items {
+                                    match item {
+                                        Item::Function(func) => {
+                                            ctx.add_function(func.name.clone(), func.clone());
+                                        }
+                                        Item::Class(class) => {
+                                            ctx.add_class(class.name.clone(), class.clone());
+                                        }
+                                    }
+                                }
+                                
+                                if let Err(e) = type_check_program_with_context(&wrapped_program, &mut ctx) {
+                                    let formatter = ErrorFormatter::new(&buffer).with_context(&ctx);
                                     eprintln!("{}", formatter.format_error(&e));
                                     buffer.clear();
                                     line_count = 0;
@@ -543,7 +618,7 @@ fn repl() -> anyhow::Result<()> {
                                 }
 
                                 // Execute the wrapped function
-                                if let Some(pain_compiler::ast::Item::Function(eval_func)) =
+                                if let Some(Item::Function(eval_func)) =
                                     wrapped_program.items.first()
                                 {
                                     match interpreter.eval_function(eval_func, &[], &mut env) {

@@ -10,7 +10,7 @@ name = "pain_compiler"
 path = "src/lib.rs"
 
 [[bin]]
-name = "pain-compiler"
+name = "pain"
 path = "src/main.rs"
 
 [dependencies]

@@ -75,6 +75,14 @@ impl TypeContext {
     pub fn add_function(&mut self, name: String, func: Function) {
         self.functions.insert(name, func);
     }
+
+    pub fn get_variable_names(&self) -> Vec<String> {
+        self.variables.keys().cloned().collect()
+    }
+
+    pub fn get_function_names(&self) -> Vec<String> {
+        self.functions.keys().cloned().collect()
+    }
 }
 
 impl Default for TypeContext {
@@ -86,7 +94,11 @@ impl Default for TypeContext {
 #[allow(clippy::result_large_err)]
 pub fn type_check_program(program: &Program) -> TypeResult<()> {
     let mut ctx = TypeContext::new();
+    type_check_program_with_context(program, &mut ctx)
+}
 
+#[allow(clippy::result_large_err)]
+pub fn type_check_program_with_context(program: &Program, ctx: &mut TypeContext) -> TypeResult<()> {
     // First pass: collect class and function signatures
     for item in &program.items {
         match item {
@@ -103,10 +115,10 @@ pub fn type_check_program(program: &Program) -> TypeResult<()> {
     for item in &program.items {
         match item {
             Item::Function(func) => {
-                type_check_function(&mut ctx, func)?;
+                type_check_function(ctx, func)?;
             }
             Item::Class(class) => {
-                type_check_class(&mut ctx, class)?;
+                type_check_class(ctx, class)?;
             }
         }
     }
