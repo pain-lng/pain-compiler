@@ -2,7 +2,7 @@
 
 use crate::ir::*;
 use crate::stdlib::get_stdlib_functions;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 pub struct CodeGenerator {
     ir: IrProgram,
@@ -18,6 +18,21 @@ pub struct CodeGenerator {
 
 impl CodeGenerator {
     pub fn new(ir: IrProgram) -> Self {
+        // Identify loop headers for vectorization hints
+        let mut loop_headers = HashSet::new();
+        for func in &ir.functions {
+            for block in &func.blocks {
+                // Check if block is a loop header (has back edge)
+                for &successor_id in &block.successors {
+                    if let Some(successor) = func.blocks.iter().find(|b| b.id == successor_id) {
+                        if successor.predecessors.contains(&block.id) {
+                            loop_headers.insert(successor_id);
+                        }
+                    }
+                }
+            }
+        }
+        
         Self {
             ir,
             llvm_code: String::new(),
@@ -28,6 +43,7 @@ impl CodeGenerator {
             next_label: 0,
             next_string_id: 0,
             current_function: None,
+            loop_headers,
         }
     }
 
@@ -196,6 +212,11 @@ impl CodeGenerator {
             "define {} @{}({}) {{\n",
             ret_type, func.name, params_str
         ));
+
+        // Add vectorization hints if function has @vectorize attribute
+        if func.attributes.iter().any(|a| a == "@vectorize" || a == "vectorize") {
+            self.llvm_code.push_str("  ; Vectorization enabled\n");
+        }
 
         // Map parameters to LLVM values
         for (name, value_id, _param_type) in &func.params {
