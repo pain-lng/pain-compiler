@@ -39,6 +39,7 @@ pub use type_checker::{
     type_check_program, type_check_program_with_context, TypeContext, TypeError, TypeResult,
 };
 pub use warnings::{Warning, WarningCollector};
+pub use llvm_tools::{PgoMode, merge_profiles};
 
 // Re-export AST types for LSP and other tools
 pub use ast::*;

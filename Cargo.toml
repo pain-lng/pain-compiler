@@ -30,6 +30,9 @@ pain-runtime = { path = "../pain-runtime" }
 regex = "1.10"
 serde_json = "1.0"
 
+# File system glob patterns
+glob = "0.3"
+
 # LLVM JIT (optional feature, requires LLVM 21+ installation)
 # To enable: cargo build --features jit
 # Note: Requires LLVM_SYS_211_PREFIX environment variable set to LLVM installation path
