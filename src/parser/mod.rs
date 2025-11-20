@@ -2,6 +2,7 @@
 // TODO: Migrate to lalrpop when token integration is resolved
 
 use crate::ast::*;
+use crate::error::ParseError;
 use crate::lexer::{IndentLexer, Token, TokenWithSpan};
 use crate::span::{Position, Span};
 
@@ -21,9 +22,42 @@ pub fn parse(source: &str) -> Result<Program, String> {
     parser.parse_program()
 }
 
+// Parse with error recovery - collects all errors instead of stopping at first
+pub fn parse_with_recovery(source: &str) -> (Result<Program, Vec<ParseError>>, Vec<ParseError>) {
+    let mut lexer = IndentLexer::new(source);
+    let mut tokens = Vec::new();
+    let mut lexer_errors = Vec::new();
+
+    for token in &mut lexer {
+        match token {
+            Ok(t) => tokens.push(t),
+            Err(_) => {
+                // Skip lexer errors for now, continue parsing
+                lexer_errors.push(ParseError {
+                    message: "Lexer error".to_string(),
+                    span: Span::single(Position::start()),
+                    expected: None,
+                    found: None,
+                });
+            }
+        }
+    }
+
+    let mut parser = Parser::new(&tokens, source);
+    let (program, parse_errors) = parser.parse_program_with_recovery();
+
+    let all_errors = [lexer_errors, parse_errors].concat();
+
+    if all_errors.is_empty() {
+        (program, vec![])
+    } else {
+        (Err(all_errors.clone()), all_errors)
+    }
+}
+
 struct Parser<'a> {
     tokens: &'a [TokenWithSpan],
-    _source: &'a str, // Reserved for future use (error messages with source snippets)
+    _source: &'a str,
     pos: usize,
 }
 
@@ -88,6 +122,140 @@ impl<'a> Parser<'a> {
                     span.line(),
                     span.column()
                 ))
+            }
+        }
+    }
+
+    fn expect_with_error(&mut self, expected: Token) -> Result<Span, ParseError> {
+        match self.next() {
+            Some(token_span)
+                if std::mem::discriminant(&token_span.token)
+                    == std::mem::discriminant(&expected) =>
+            {
+                Ok(token_span.span)
+            }
+            Some(token_span) => {
+                let span = token_span.span;
+                Err(ParseError {
+                    message: format!("Expected {:?}, got {:?}", expected, token_span.token),
+                    span,
+                    expected: Some(format!("{:?}", expected)),
+                    found: Some(format!("{:?}", token_span.token)),
+                })
+            }
+            None => {
+                let span = self.current_span();
+                Err(ParseError {
+                    message: format!("Expected {:?}, got EOF", expected),
+                    span,
+                    expected: Some(format!("{:?}", expected)),
+                    found: Some("EOF".to_string()),
+                })
+            }
+        }
+    }
+
+    // Skip tokens until we find a synchronization point
+    fn sync_to_next_item(&mut self) {
+        while let Some(token) = self.peek_token() {
+            match token {
+                Token::Fn | Token::Class | Token::At | Token::DocComment(_) => {
+                    break; // Found start of next item
+                }
+                _ => {
+                    self.next();
+                }
+            }
+        }
+    }
+
+    // Parse program with error recovery
+    fn parse_program_with_recovery(
+        &mut self,
+    ) -> (Result<Program, Vec<ParseError>>, Vec<ParseError>) {
+        let start_span = if let Some(first) = self.tokens.first() {
+            first.span
+        } else {
+            Span::single(Position::start())
+        };
+
+        let mut items = Vec::new();
+        let mut errors = Vec::new();
+
+        while self.peek().is_some() {
+            match self.parse_item_with_recovery() {
+                Ok(item) => items.push(item),
+                Err(err) => {
+                    errors.push(err);
+                    // Try to recover by syncing to next item
+                    self.sync_to_next_item();
+                }
+            }
+        }
+
+        let end_span = if let Some(last) = self.tokens.last() {
+            last.span
+        } else {
+            start_span
+        };
+
+        let span = Span::new(start_span.start, end_span.end);
+        let program = Program { items, span };
+
+        if errors.is_empty() {
+            (Ok(program), vec![])
+        } else {
+            (Err(errors.clone()), errors)
+        }
+    }
+
+    fn parse_item_with_recovery(&mut self) -> Result<Item, ParseError> {
+        if matches!(self.peek_token(), Some(Token::Class)) {
+            self.parse_class_with_recovery().map(Item::Class)
+        } else if matches!(
+            self.peek_token(),
+            Some(Token::Fn) | Some(Token::At) | Some(Token::DocComment(_))
+        ) {
+            self.parse_function_with_recovery().map(Item::Function)
+        } else {
+            let span = self.current_span();
+            Err(ParseError {
+                message: "Expected function, class, or attribute".to_string(),
+                span,
+                expected: Some("function, class, or attribute".to_string()),
+                found: self.peek_token().map(|t| format!("{:?}", t)),
+            })
+        }
+    }
+
+    fn parse_function_with_recovery(&mut self) -> Result<Function, ParseError> {
+        // Simplified recovery version - just call the regular parse and convert errors
+        match self.parse_function() {
+            Ok(func) => Ok(func),
+            Err(msg) => {
+                let span = self.current_span();
+                Err(ParseError {
+                    message: msg,
+                    span,
+                    expected: None,
+                    found: None,
+                })
+            }
+        }
+    }
+
+    fn parse_class_with_recovery(&mut self) -> Result<Class, ParseError> {
+        // Simplified recovery version - just call the regular parse and convert errors
+        match self.parse_class() {
+            Ok(class) => Ok(class),
+            Err(msg) => {
+                let span = self.current_span();
+                Err(ParseError {
+                    message: msg,
+                    span,
+                    expected: None,
+                    found: None,
+                })
             }
         }
     }

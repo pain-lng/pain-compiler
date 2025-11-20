@@ -2,7 +2,7 @@
 
 use crate::ir::*;
 use crate::stdlib::get_stdlib_functions;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 pub struct CodeGenerator {
     ir: IrProgram,
@@ -14,10 +14,27 @@ pub struct CodeGenerator {
     next_label: u32,
     next_string_id: u32,
     current_function: Option<FunctionId>, // Track current function for return type
+    #[allow(dead_code)]
+    loop_headers: HashSet<BlockId>, // Track loop headers for vectorization hints
 }
 
 impl CodeGenerator {
     pub fn new(ir: IrProgram) -> Self {
+        // Identify loop headers for vectorization hints
+        let mut loop_headers = HashSet::new();
+        for func in &ir.functions {
+            for block in &func.blocks {
+                // Check if block is a loop header (has back edge)
+                for &successor_id in &block.successors {
+                    if let Some(successor) = func.blocks.iter().find(|b| b.id == successor_id) {
+                        if successor.predecessors.contains(&block.id) {
+                            loop_headers.insert(successor_id);
+                        }
+                    }
+                }
+            }
+        }
+
         Self {
             ir,
             llvm_code: String::new(),
@@ -28,6 +45,7 @@ impl CodeGenerator {
             next_label: 0,
             next_string_id: 0,
             current_function: None,
+            loop_headers,
         }
     }
 
@@ -170,7 +188,14 @@ impl CodeGenerator {
             crate::ast::Type::Bool => "i1".to_string(),
             crate::ast::Type::Str => "i8*".to_string(),
             crate::ast::Type::Dynamic => "i8*".to_string(), // Dynamic types as generic pointers
-            _ => "i8*".to_string(),                         // Default to pointer for complex types
+            crate::ast::Type::List(element) => {
+                // List is represented as a pointer to array
+                format!("{}*", self.llvm_type_from_ast(element))
+            }
+            crate::ast::Type::Array(element) => {
+                format!("{}*", self.llvm_type_from_ast(element))
+            }
+            _ => "i8*".to_string(), // Default to pointer for complex types
         }
     }
 
@@ -189,6 +214,15 @@ impl CodeGenerator {
             "define {} @{}({}) {{\n",
             ret_type, func.name, params_str
         ));
+
+        // Add vectorization hints if function has @vectorize attribute
+        if func
+            .attributes
+            .iter()
+            .any(|a| a == "@vectorize" || a == "vectorize")
+        {
+            self.llvm_code.push_str("  ; Vectorization enabled\n");
+        }
 
         // Map parameters to LLVM values
         for (name, value_id, _param_type) in &func.params {
@@ -588,6 +622,166 @@ impl CodeGenerator {
                                     .collect::<Vec<_>>()
                                     .join(", ")
                             ));
+                        }
+                    }
+                    // File I/O functions
+                    "read_file" => {
+                        // read_file(path: str) -> str
+                        if let Some(path_arg) = arg_values.first() {
+                            self.llvm_code.push_str(&format!(
+                                "  {} = call i8* @read_file(i8* {})\n",
+                                result, path_arg
+                            ));
+                        }
+                    }
+                    "write_file" => {
+                        // write_file(path: str, content: str) -> void
+                        if arg_values.len() >= 2 {
+                            self.llvm_code.push_str(&format!(
+                                "  call void @write_file(i8* {}, i8* {})\n",
+                                arg_values[0], arg_values[1]
+                            ));
+                            return String::new();
+                        }
+                    }
+                    "read_lines" => {
+                        // read_lines(path: str) -> list[str]
+                        if let Some(path_arg) = arg_values.first() {
+                            self.llvm_code.push_str(&format!(
+                                "  {} = call i8** @read_lines(i8* {})\n",
+                                result, path_arg
+                            ));
+                        }
+                    }
+                    // Path manipulation functions
+                    "path_join" => {
+                        // path_join(parts: list[str]) -> str
+                        if let Some(parts_arg) = arg_values.first() {
+                            self.llvm_code.push_str(&format!(
+                                "  {} = call i8* @path_join(i8** {})\n",
+                                result, parts_arg
+                            ));
+                        }
+                    }
+                    "path_dir" | "path_base" | "path_ext" => {
+                        // path_dir/path_base/path_ext(path: str) -> str
+                        if let Some(path_arg) = arg_values.first() {
+                            self.llvm_code.push_str(&format!(
+                                "  {} = call i8* @{}(i8* {})\n",
+                                result, name, path_arg
+                            ));
+                        }
+                    }
+                    // Date/time functions
+                    "now" => {
+                        // now() -> float64
+                        self.llvm_code
+                            .push_str(&format!("  {} = call double @now()\n", result));
+                    }
+                    "time_format" => {
+                        // time_format(timestamp: float64, format: str) -> str
+                        if arg_values.len() >= 2 {
+                            self.llvm_code.push_str(&format!(
+                                "  {} = call i8* @time_format(double {}, i8* {})\n",
+                                result, arg_values[0], arg_values[1]
+                            ));
+                        }
+                    }
+                    // Regular expression functions
+                    "regex_match" => {
+                        // regex_match(pattern: str, text: str) -> bool
+                        if arg_values.len() >= 2 {
+                            self.llvm_code.push_str(&format!(
+                                "  {} = call i1 @regex_match(i8* {}, i8* {})\n",
+                                result, arg_values[0], arg_values[1]
+                            ));
+                        }
+                    }
+                    "regex_find" => {
+                        // regex_find(pattern: str, text: str) -> str
+                        if arg_values.len() >= 2 {
+                            self.llvm_code.push_str(&format!(
+                                "  {} = call i8* @regex_find(i8* {}, i8* {})\n",
+                                result, arg_values[0], arg_values[1]
+                            ));
+                        }
+                    }
+                    "regex_find_all" => {
+                        // regex_find_all(pattern: str, text: str) -> list[str]
+                        if arg_values.len() >= 2 {
+                            self.llvm_code.push_str(&format!(
+                                "  {} = call i8** @regex_find_all(i8* {}, i8* {})\n",
+                                result, arg_values[0], arg_values[1]
+                            ));
+                        }
+                    }
+                    "regex_replace" => {
+                        // regex_replace(pattern: str, text: str, replacement: str) -> str
+                        if arg_values.len() >= 3 {
+                            self.llvm_code.push_str(&format!(
+                                "  {} = call i8* @regex_replace(i8* {}, i8* {}, i8* {})\n",
+                                result, arg_values[0], arg_values[1], arg_values[2]
+                            ));
+                        }
+                    }
+                    // JSON functions
+                    "json_parse" => {
+                        // json_parse(json_str: str) -> dynamic
+                        if let Some(json_arg) = arg_values.first() {
+                            self.llvm_code.push_str(&format!(
+                                "  {} = call i8* @json_parse(i8* {})\n",
+                                result, json_arg
+                            ));
+                        }
+                    }
+                    "json_stringify" => {
+                        // json_stringify(value: dynamic) -> str
+                        if let Some(value_arg) = arg_values.first() {
+                            self.llvm_code.push_str(&format!(
+                                "  {} = call i8* @json_stringify(i8* {})\n",
+                                result, value_arg
+                            ));
+                        }
+                    }
+                    // String functions (already declared, generate calls)
+                    "len" | "concat" | "substring" | "contains" | "starts_with" | "ends_with"
+                    | "trim" | "to_int" | "to_float" | "to_string" => {
+                        // Get function signature from stdlib
+                        let stdlib_funcs = get_stdlib_functions();
+                        if let Some(func) = stdlib_funcs.iter().find(|f| f.name == *name) {
+                            let param_types: Vec<String> = func
+                                .params
+                                .iter()
+                                .map(|(_, ty)| self.llvm_type_from_ast(ty))
+                                .collect();
+                            let ret_type = self.llvm_type_from_ast(&func.return_type);
+
+                            if ret_type == "void" {
+                                self.llvm_code.push_str(&format!(
+                                    "  call void @{}({})\n",
+                                    name,
+                                    arg_values
+                                        .iter()
+                                        .zip(param_types.iter())
+                                        .map(|(val, ty)| format!("{} {}", ty, val))
+                                        .collect::<Vec<_>>()
+                                        .join(", ")
+                                ));
+                                return String::new();
+                            } else {
+                                self.llvm_code.push_str(&format!(
+                                    "  {} = call {} @{}({})\n",
+                                    result,
+                                    ret_type,
+                                    name,
+                                    arg_values
+                                        .iter()
+                                        .zip(param_types.iter())
+                                        .map(|(val, ty)| format!("{} {}", ty, val))
+                                        .collect::<Vec<_>>()
+                                        .join(", ")
+                                ));
+                            }
                         }
                     }
                     _ => {

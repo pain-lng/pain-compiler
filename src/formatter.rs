@@ -344,9 +344,9 @@ impl Formatter {
     }
 
     fn format_binary_op(&mut self, lhs: &Expr, op: &str, rhs: &Expr) {
-        // Check if we need parentheses
-        let needs_parens_lhs = self.needs_parens(lhs);
-        let needs_parens_rhs = self.needs_parens(rhs);
+        let op_prec = self.get_op_precedence(op);
+        let needs_parens_lhs = self.needs_parens_for_op(lhs, op_prec, false);
+        let needs_parens_rhs = self.needs_parens_for_op(rhs, op_prec, true);
 
         if needs_parens_lhs {
             self.write("(");
@@ -369,23 +369,59 @@ impl Formatter {
         }
     }
 
-    fn needs_parens(&self, expr: &Expr) -> bool {
-        matches!(
-            expr,
-            Expr::Add(_, _)
-                | Expr::Sub(_, _)
-                | Expr::Mul(_, _)
-                | Expr::Div(_, _)
-                | Expr::Mod(_, _)
-                | Expr::Eq(_, _)
-                | Expr::Ne(_, _)
-                | Expr::Lt(_, _)
-                | Expr::Gt(_, _)
-                | Expr::Le(_, _)
-                | Expr::Ge(_, _)
-                | Expr::And(_, _)
-                | Expr::Or(_, _)
-        )
+    // Get operator precedence (higher number = higher precedence)
+    fn get_op_precedence(&self, op: &str) -> u8 {
+        match op {
+            "*" | "/" | "%" => 5,
+            "+" | "-" => 4,
+            "<" | ">" | "<=" | ">=" => 3,
+            "==" | "!=" => 2,
+            "&&" => 1,
+            "||" => 0,
+            _ => 0,
+        }
+    }
+
+    // Check if expression needs parentheses based on operator precedence
+    fn needs_parens_for_op(&self, expr: &Expr, parent_prec: u8, is_right: bool) -> bool {
+        match expr {
+            Expr::Add(_, _) | Expr::Sub(_, _) => {
+                let prec = self.get_op_precedence("+");
+                // Left-associative: need parens if same or lower precedence
+                prec <= parent_prec
+            }
+            Expr::Mul(_, _) | Expr::Div(_, _) | Expr::Mod(_, _) => {
+                let prec = self.get_op_precedence("*");
+                // For right operand with higher or equal precedence, add parens for clarity
+                // For left operand, only if lower precedence
+                if is_right {
+                    prec >= parent_prec
+                } else {
+                    prec < parent_prec
+                }
+            }
+            Expr::Eq(_, _) | Expr::Ne(_, _) => {
+                let prec = self.get_op_precedence("==");
+                // Non-associative: always need parens if same or lower precedence
+                prec <= parent_prec
+            }
+            Expr::Lt(_, _) | Expr::Gt(_, _) | Expr::Le(_, _) | Expr::Ge(_, _) => {
+                let prec = self.get_op_precedence("<");
+                // Non-associative: always need parens if same or lower precedence
+                prec <= parent_prec
+            }
+            Expr::And(_, _) => {
+                let prec = self.get_op_precedence("&&");
+                // Left-associative: need parens if same or lower precedence
+                prec <= parent_prec
+            }
+            Expr::Or(_, _) => {
+                let prec = self.get_op_precedence("||");
+                // Left-associative: need parens if same or lower precedence
+                prec <= parent_prec
+            }
+            _ => false,
+        }
     }
 
     fn format_type(&mut self, ty: &Type) {

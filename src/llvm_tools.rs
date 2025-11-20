@@ -97,6 +97,15 @@ pub fn link_object_to_executable(
     executable_path: &Path,
     target_triple: Option<&str>,
 ) -> io::Result<()> {
+    link_objects_to_executable(&[object_path], executable_path, target_triple)
+}
+
+/// Link multiple object files to executable
+fn link_objects_to_executable(
+    object_paths: &[&Path],
+    executable_path: &Path,
+    target_triple: Option<&str>,
+) -> io::Result<()> {
     // Detect linker based on target triple or platform
     let linker = detect_linker(target_triple)?;
 
@@ -106,17 +115,29 @@ pub fn link_object_to_executable(
         "clang" | "gcc" => {
             // Unix-like systems: use clang/gcc as linker
             cmd.arg("-o").arg(executable_path);
-            cmd.arg(object_path);
+            for obj_path in object_paths {
+                if obj_path.exists() {
+                    cmd.arg(obj_path);
+                }
+            }
         }
         "link" => {
             // Windows MSVC linker
             cmd.arg("/OUT:").arg(executable_path);
-            cmd.arg(object_path);
+            for obj_path in object_paths {
+                if obj_path.exists() {
+                    cmd.arg(obj_path);
+                }
+            }
         }
         "ld" => {
             // Direct linker (less common)
             cmd.arg("-o").arg(executable_path);
-            cmd.arg(object_path);
+            for obj_path in object_paths {
+                if obj_path.exists() {
+                    cmd.arg(obj_path);
+                }
+            }
         }
         _ => {
             return Err(io::Error::other(format!("Unknown linker: {}", linker)));
@@ -183,6 +204,45 @@ fn detect_linker(target_triple: Option<&str>) -> io::Result<String> {
     ))
 }
 
+/// Compile C runtime library to object file
+fn compile_stdlib_runtime(object_path: &Path, target_triple: Option<&str>) -> io::Result<()> {
+    // Find stdlib_runtime.c in the source directory
+    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR")
+        .map_err(|_| io::Error::new(io::ErrorKind::NotFound, "CARGO_MANIFEST_DIR not set"))?;
+    let runtime_c_path = Path::new(&manifest_dir)
+        .join("src")
+        .join("stdlib_runtime.c");
+
+    if !runtime_c_path.exists() {
+        // If runtime file doesn't exist, skip compilation
+        return Ok(());
+    }
+
+    let compiler = find_llvm_compiler()?;
+    let mut cmd = Command::new(&compiler);
+
+    cmd.arg("-c");
+    cmd.arg("-o").arg(object_path);
+
+    if let Some(triple) = target_triple {
+        cmd.arg("-target").arg(triple);
+    }
+
+    cmd.arg(&runtime_c_path);
+
+    let output = cmd.output()?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(io::Error::other(format!(
+            "Failed to compile stdlib runtime: {}",
+            stderr
+        )));
+    }
+
+    Ok(())
+}
+
 /// Compile LLVM IR to executable in one step
 pub fn compile_to_executable(
     llvm_ir_path: &Path,
@@ -201,6 +261,18 @@ pub fn compile_to_executable(
 
         if let Some(triple) = target_triple {
             cmd.arg("-target").arg(triple);
+        }
+
+        // Compile and link stdlib runtime if it exists
+        // Note: In release builds, CARGO_MANIFEST_DIR might not be available
+        // So we try to find the file relative to the executable or skip it
+        if let Ok(manifest_dir) = std::env::var("CARGO_MANIFEST_DIR") {
+            let runtime_c_path = Path::new(&manifest_dir)
+                .join("src")
+                .join("stdlib_runtime.c");
+            if runtime_c_path.exists() {
+                cmd.arg(&runtime_c_path);
+            }
         }
 
         cmd.arg(llvm_ir_path);
@@ -229,20 +301,31 @@ pub fn compile_to_executable(
     // Fallback: use llc + linker (two steps)
     // Create temporary object file
     let object_path = executable_path.with_extension("o");
+    let runtime_object_path = executable_path.with_extension("runtime.o");
 
     // Step 1: Compile LLVM IR to object file
     println!("Compiling LLVM IR to object file...");
     compile_llvm_ir_to_object(llvm_ir_path, &object_path, target_triple)?;
     println!("✓ Object file generated: {:?}", object_path);
 
-    // Step 2: Link object file to executable
-    println!("Linking object file to executable...");
-    link_object_to_executable(&object_path, executable_path, target_triple)?;
+    // Step 1.5: Compile stdlib runtime if it exists
+    if compile_stdlib_runtime(&runtime_object_path, target_triple).is_ok() {
+        println!("✓ Stdlib runtime compiled: {:?}", runtime_object_path);
+    }
+
+    // Step 2: Link object files to executable
+    println!("Linking object files to executable...");
+    link_objects_to_executable(
+        &[&object_path, &runtime_object_path],
+        executable_path,
+        target_triple,
+    )?;
     println!("✓ Executable generated: {:?}", executable_path);
 
     // Clean up intermediate files if not keeping them
     if !keep_intermediates {
         let _ = fs::remove_file(&object_path);
+        let _ = fs::remove_file(&runtime_object_path);
         let _ = fs::remove_file(llvm_ir_path);
     }
 

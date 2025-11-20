@@ -15,6 +15,7 @@ impl Optimizer {
         ir = Self::constant_folding(&ir);
         ir = Self::common_subexpression_elimination(&ir);
         ir = Self::loop_invariant_code_motion(&ir);
+        ir = Self::loop_unrolling(&ir);
         ir = Self::function_inlining(&ir);
         ir = Self::tail_call_optimization(&ir);
         ir = Self::dead_code_elimination(&ir);
@@ -794,6 +795,114 @@ impl Optimizer {
         new_ir
     }
 
+    /// Loop unrolling: unroll small loops with known iteration counts
+    fn loop_unrolling(ir: &IrProgram) -> IrProgram {
+        let mut new_ir = ir.clone();
+
+        for func in &mut new_ir.functions {
+            let loops = Self::find_loops(func);
+
+            for (header_id, body_blocks) in loops {
+                // Try to determine loop iteration count
+                if let Some(iteration_count) =
+                    Self::estimate_loop_iterations(func, header_id, &body_blocks)
+                {
+                    // Only unroll small loops (<= 8 iterations) to avoid code bloat
+                    if iteration_count > 0 && iteration_count <= 8 {
+                        // Check if loop body is small enough to unroll
+                        let body_size: usize = body_blocks
+                            .iter()
+                            .map(|&bid| {
+                                func.blocks
+                                    .iter()
+                                    .find(|b| b.id == bid)
+                                    .map(|b| b.instructions.len())
+                                    .unwrap_or(0)
+                            })
+                            .sum();
+
+                        // Unroll if total unrolled size is reasonable (< 200 instructions)
+                        if body_size * iteration_count < 200 {
+                            if Self::unroll_loop(func, header_id, &body_blocks, iteration_count) {
+                                // Loop was unrolled, continue to next loop
+                                continue;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        new_ir
+    }
+
+    /// Estimate loop iteration count (returns Some(count) if estimable, None otherwise)
+    fn estimate_loop_iterations(
+        func: &IrFunction,
+        header_id: BlockId,
+        _body_blocks: &[BlockId],
+    ) -> Option<usize> {
+        // Try to find a constant loop bound
+        // Look for patterns like: for i in 0..N where N is constant
+        // This is a simplified heuristic - in practice, would need more sophisticated analysis
+
+        if let Some(header) = func.blocks.iter().find(|b| b.id == header_id) {
+            // Look for constant comparisons in the header
+            for (_value_id, instr) in &header.instructions {
+                if let Instruction::Lt { lhs, rhs } | Instruction::Le { lhs, rhs } = instr {
+                    // Check if operands are constants
+                    if let Some(lhs_val) = Self::get_constant_value(func, *lhs) {
+                        if let Some(rhs_val) = Self::get_constant_value(func, *rhs) {
+                            // Both are constants - calculate difference
+                            let diff = (rhs_val - lhs_val).abs() as usize;
+                            if diff > 0 && diff <= 8 {
+                                return Some(diff);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        None
+    }
+
+    /// Get constant value from a ValueId (if it's a constant)
+    fn get_constant_value(func: &IrFunction, value_id: ValueId) -> Option<i64> {
+        for block in &func.blocks {
+            for (vid, instr) in &block.instructions {
+                if *vid == value_id {
+                    return match instr {
+                        Instruction::ConstInt { value } => Some(*value),
+                        Instruction::ConstFloat { value } => Some(*value as i64),
+                        Instruction::ConstBool { value } => Some(if *value { 1 } else { 0 }),
+                        _ => None,
+                    };
+                }
+            }
+        }
+        None
+    }
+
+    /// Unroll a loop by the specified number of iterations
+    fn unroll_loop(
+        _func: &mut IrFunction,
+        _header_id: BlockId,
+        _body_blocks: &[BlockId],
+        _iterations: usize,
+    ) -> bool {
+        // This is a simplified implementation
+        // In practice, would need to handle:
+        // - Induction variable updates
+        // - Loop exit conditions
+        // - Phi nodes
+        // - Control flow
+
+        // For now, return false to indicate we couldn't unroll
+        // This is a placeholder for future implementation
+        false
+    }
+
     /// Find all loops in a function (returns (header_block_id, body_block_ids))
     fn find_loops(func: &IrFunction) -> Vec<(BlockId, Vec<BlockId>)> {
         let mut loops = Vec::new();
@@ -937,40 +1046,76 @@ impl Optimizer {
         pre_header_id
     }
 
-    /// Function inlining: inline small functions marked with @inline attribute
+    /// Function inlining: inline small functions with improved heuristics
     fn function_inlining(ir: &IrProgram) -> IrProgram {
         let mut new_ir = ir.clone();
 
-        // Find functions marked for inlining and create a map of name -> function data (clone needed data)
+        // First pass: count call sites for each function
+        let mut call_counts: HashMap<String, usize> = HashMap::new();
+        for func in &new_ir.functions {
+            for block in &func.blocks {
+                for (_value_id, instr) in &block.instructions {
+                    if let Instruction::Call {
+                        function_name: Some(callee_name),
+                        ..
+                    } = instr
+                    {
+                        *call_counts.entry(callee_name.clone()).or_insert(0) += 1;
+                    }
+                }
+            }
+        }
+
+        // Find functions suitable for inlining with improved heuristics
         type InlineCandidate = (
             FunctionId,
             BlockId,
             Vec<BasicBlock>,
             Vec<(String, ValueId, IrType)>,
+            usize, // instruction count
+            usize, // complexity score
         );
         let mut inline_candidates: HashMap<String, InlineCandidate> = HashMap::new();
+
         for func in &new_ir.functions {
-            if func
+            let total_instructions: usize = func.blocks.iter().map(|b| b.instructions.len()).sum();
+
+            // Calculate complexity score (higher = more complex)
+            let complexity = Self::calculate_function_complexity(func);
+
+            // Check if function should be inlined
+            let should_inline = if func
                 .attributes
                 .iter()
                 .any(|a| a == "@inline" || a == "inline")
             {
-                // Check if function is small enough to inline
-                let total_instructions: usize =
-                    func.blocks.iter().map(|b| b.instructions.len()).sum();
+                // Explicitly marked for inlining - more lenient limits
+                total_instructions < 50 && complexity < 20
+            } else {
+                // Automatic inlining heuristics
+                let call_count = call_counts.get(&func.name).copied().unwrap_or(0);
 
-                if total_instructions < 10 {
-                    // Clone the function's data for inlining
-                    inline_candidates.insert(
-                        func.name.clone(),
-                        (
-                            func.id,
-                            func.entry_block,
-                            func.blocks.clone(),
-                            func.params.clone(),
-                        ),
-                    );
-                }
+                // Inline if:
+                // - Very small functions (< 5 instructions) regardless of calls
+                // - Small functions (< 15 instructions) called once or twice
+                // - Medium functions (< 30 instructions) called exactly once
+                (total_instructions < 5)
+                    || (total_instructions < 15 && call_count <= 2 && complexity < 10)
+                    || (total_instructions < 30 && call_count == 1 && complexity < 15)
+            };
+
+            if should_inline {
+                inline_candidates.insert(
+                    func.name.clone(),
+                    (
+                        func.id,
+                        func.entry_block,
+                        func.blocks.clone(),
+                        func.params.clone(),
+                        total_instructions,
+                        complexity,
+                    ),
+                );
             }
         }
 
@@ -978,10 +1123,13 @@ impl Optimizer {
             return new_ir;
         }
 
-        // Inline small functions
+        // Inline functions with improved heuristics
         for func in &mut new_ir.functions {
             let mut changed = true;
-            while changed {
+            let mut inline_count = 0; // Limit inlining per function to avoid code bloat
+            const MAX_INLINES_PER_FUNCTION: usize = 10;
+
+            while changed && inline_count < MAX_INLINES_PER_FUNCTION {
                 changed = false;
 
                 for block in &mut func.blocks {
@@ -1001,6 +1149,8 @@ impl Optimizer {
                                 entry_block_id,
                                 callee_blocks,
                                 callee_params,
+                                _instr_count,
+                                _complexity,
                             )) = inline_candidates.get(callee_name)
                             {
                                 // Inline the function
@@ -1014,6 +1164,7 @@ impl Optimizer {
                                     new_instructions.extend(inlined_code);
                                     block_changed = true;
                                     changed = true;
+                                    inline_count += 1;
                                     continue;
                                 }
                             }
@@ -1030,6 +1181,54 @@ impl Optimizer {
         }
 
         new_ir
+    }
+
+    /// Calculate complexity score for a function (higher = more complex)
+    /// Factors: loops, function calls, branches, memory operations
+    fn calculate_function_complexity(func: &IrFunction) -> usize {
+        let mut complexity = 0;
+
+        for block in &func.blocks {
+            for (_value_id, instr) in &block.instructions {
+                match instr {
+                    Instruction::Call { .. } => complexity += 3, // Function calls add complexity
+                    Instruction::Intrinsic { .. } => complexity += 1,
+                    Instruction::Alloc { .. } | Instruction::Free { .. } => complexity += 2,
+                    Instruction::Store { .. } | Instruction::Load { .. } => complexity += 1,
+                    _ => {}
+                }
+            }
+
+            // Branches add complexity
+            if let Some(terminator) = &block.terminator {
+                match terminator {
+                    Instruction::Branch { .. } => complexity += 2,
+                    Instruction::Jump { .. } => {}
+                    Instruction::Return { .. } => {}
+                    _ => complexity += 1,
+                }
+            }
+        }
+
+        // Loops add significant complexity (detected by back edges)
+        let mut has_loop = false;
+        for block in &func.blocks {
+            for successor in &block.successors {
+                // Check if successor is a predecessor (back edge = loop)
+                if block.predecessors.contains(successor) {
+                    has_loop = true;
+                    break;
+                }
+            }
+            if has_loop {
+                break;
+            }
+        }
+        if has_loop {
+            complexity += 10;
+        }
+
+        complexity
     }
 
     /// Inline a function call, returning the inlined instructions
