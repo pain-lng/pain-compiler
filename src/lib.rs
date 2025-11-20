@@ -9,6 +9,8 @@ pub mod interpreter;
 pub mod ir;
 pub mod ir_builder;
 pub mod jit;
+#[cfg(feature = "jit")]
+pub mod jit_orc;
 pub mod lexer;
 pub mod llvm_tools;
 pub mod mlir_codegen;

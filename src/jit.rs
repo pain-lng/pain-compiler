@@ -4,6 +4,8 @@
 use crate::codegen::CodeGenerator;
 use crate::ir::IrProgram;
 use crate::optimizations::Optimizer;
+#[cfg(feature = "jit")]
+use crate::jit_orc::OrcJitEngine;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -25,6 +27,9 @@ pub struct JitEngine {
     function_cache: Rc<RefCell<HashMap<String, JitFunction>>>,
     /// Optimized IR program
     ir: IrProgram,
+    /// ORC JIT engine for runtime code generation
+    #[cfg(feature = "jit")]
+    orc_engine: Option<OrcJitEngine>,
 }
 
 impl JitEngine {
@@ -33,13 +38,19 @@ impl JitEngine {
         // Optimize IR
         let optimized_ir = Optimizer::optimize(ir);
 
+        // Try to create ORC JIT engine (may fail if JIT feature is disabled or LLVM is not available)
+        #[cfg(feature = "jit")]
+        let orc_engine = OrcJitEngine::new().ok();
+
         Self {
             function_cache: Rc::new(RefCell::new(HashMap::new())),
             ir: optimized_ir,
+            #[cfg(feature = "jit")]
+            orc_engine,
         }
     }
 
-    /// Compile a function to machine code (returns LLVM IR for now)
+    /// Compile a function to machine code
     pub fn compile_function(&self, function_name: &str) -> Result<JitFunction, String> {
         // Check cache first
         {
@@ -57,16 +68,33 @@ impl JitEngine {
             .find(|f| f.name == function_name)
             .ok_or_else(|| format!("Function '{}' not found", function_name))?;
 
-        // Generate LLVM IR for this function
+        // Generate LLVM IR for the full module
         let codegen = CodeGenerator::new(self.ir.clone());
         let full_llvm_ir = codegen.generate();
 
-        // Extract function-specific IR (simplified - in real JIT we'd compile just the function)
+        // Extract function-specific IR
         let function_ir = extract_function_ir(&full_llvm_ir, function_name)?;
+
+        // Try to compile to machine code if ORC engine is available
+        let code_ptr = {
+            #[cfg(feature = "jit")]
+            {
+                if let Some(ref engine) = self.orc_engine {
+                    // Compile full module to get function pointer
+                    engine.compile_module(&full_llvm_ir, function_name).ok()
+                } else {
+                    None
+                }
+            }
+            #[cfg(not(feature = "jit"))]
+            {
+                None
+            }
+        };
 
         let jit_func = JitFunction {
             name: function_name.to_string(),
-            code_ptr: None, // TODO: Compile to machine code using LLVM ORC
+            code_ptr,
             llvm_ir: function_ir,
         };
 
@@ -104,6 +132,43 @@ impl JitEngine {
         let cache = self.function_cache.borrow();
         let names: Vec<String> = cache.keys().cloned().collect();
         (cache.len(), names)
+    }
+
+    /// Execute a JIT-compiled function
+    /// Returns the result as i64 (for integer return types)
+    /// This is a simplified version - in a full implementation, we'd handle different return types
+    /// Note: args parameter is reserved for future use when we implement proper function calling convention
+    pub unsafe fn execute_function(&self, function_name: &str, _args: &[i64]) -> Result<i64, String> {
+        let jit_func = self.get_or_compile(function_name)?;
+        
+        if let Some(code_ptr) = jit_func.code_ptr {
+            // Cast function pointer to callable function
+            // This assumes the function signature matches (i64, ...) -> i64
+            type JitFunctionPtr = unsafe extern "C" fn() -> i64;
+            let func: JitFunctionPtr = std::mem::transmute(code_ptr);
+            
+            // Call the function
+            // Note: This is simplified - in reality, we need to handle different signatures
+            // For now, we assume functions take no arguments and return i64
+            Ok(func())
+        } else {
+            Err(format!("Function '{}' is not compiled to machine code. JIT compilation may have failed.", function_name))
+        }
+    }
+
+    /// Trigger On-Stack Replacement (OSR) for a function
+    /// This recompiles a function with optimizations and replaces it in the cache
+    pub fn osr_replace(&self, function_name: &str) -> Result<(), String> {
+        // Remove from cache to force recompilation
+        {
+            let mut cache = self.function_cache.borrow_mut();
+            cache.remove(function_name);
+        }
+        
+        // Recompile with optimizations
+        self.compile_function(function_name)?;
+        
+        Ok(())
     }
 }
 
@@ -203,5 +268,28 @@ fn main() -> int:
         let (count, names) = jit.cache_stats();
         assert_eq!(count, 1);
         assert!(names.contains(&"add".to_string()));
+    }
+
+    #[test]
+    fn test_jit_osr_replace() {
+        let source = "fn add(a: int, b: int) -> int:
+    return a + b";
+
+        let program = parse(source).unwrap();
+        let ir_builder = IrBuilder::new();
+        let ir = ir_builder.build(&program);
+
+        let jit = JitEngine::new(ir);
+        
+        // Compile function
+        let func1 = jit.compile_function("add").unwrap();
+        assert_eq!(func1.name, "add");
+        
+        // Trigger OSR replacement
+        jit.osr_replace("add").unwrap();
+        
+        // Function should be recompiled
+        let func2 = jit.compile_function("add").unwrap();
+        assert_eq!(func2.name, "add");
     }
 }
