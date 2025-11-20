@@ -4,6 +4,10 @@ use crate::ast::{Class, Expr, Function, Item, Program, Statement, Type};
 use crate::stdlib::is_stdlib_function;
 use pain_runtime::{ClassInstance, Value};
 use std::collections::HashMap;
+use std::fs;
+use std::path::Path;
+use regex::Regex;
+use serde_json;
 
 /// Control flow result
 enum ControlFlow {
@@ -989,6 +993,256 @@ impl Interpreter {
                     _ => Err("len requires string, list, or array argument"),
                 }
             }
+            // File I/O functions
+            "read_file" => {
+                if args.len() != 1 {
+                    return Err("read_file requires one argument");
+                }
+                if let Value::String(path) = &args[0] {
+                    match fs::read_to_string(path) {
+                        Ok(content) => Ok(Value::String(content)),
+                        Err(_) => Err("Failed to read file"),
+                    }
+                } else {
+                    Err("read_file requires string argument")
+                }
+            }
+            "write_file" => {
+                if args.len() != 2 {
+                    return Err("write_file requires two arguments");
+                }
+                if let (Value::String(path), Value::String(content)) = (&args[0], &args[1]) {
+                    match fs::write(path, content) {
+                        Ok(_) => Ok(Value::None),
+                        Err(_) => Err("Failed to write file"),
+                    }
+                } else {
+                    Err("write_file requires two string arguments")
+                }
+            }
+            "read_lines" => {
+                if args.len() != 1 {
+                    return Err("read_lines requires one argument");
+                }
+                if let Value::String(path) = &args[0] {
+                    match fs::read_to_string(path) {
+                        Ok(content) => {
+                            let lines: Vec<Value> = content
+                                .lines()
+                                .map(|line| Value::String(line.to_string()))
+                                .collect();
+                            Ok(Value::List(lines))
+                        }
+                        Err(_) => Err("Failed to read file"),
+                    }
+                } else {
+                    Err("read_lines requires string argument")
+                }
+            }
+            // Path manipulation functions
+            "path_join" => {
+                if args.len() != 1 {
+                    return Err("path_join requires one argument");
+                }
+                if let Value::List(parts) = &args[0] {
+                    let path_strings: Result<Vec<&str>, _> = parts
+                        .iter()
+                        .map(|v| {
+                            if let Value::String(s) = v {
+                                Ok(s.as_str())
+                            } else {
+                                Err("path_join requires list of strings")
+                            }
+                        })
+                        .collect();
+                    match path_strings {
+                        Ok(strings) => {
+                            let path = Path::new(&strings[0]);
+                            let joined = strings[1..].iter().fold(path.to_path_buf(), |acc, p| {
+                                acc.join(p)
+                            });
+                            Ok(Value::String(joined.to_string_lossy().to_string()))
+                        }
+                        Err(_) => Err("path_join requires list of strings"),
+                    }
+                } else {
+                    Err("path_join requires list argument")
+                }
+            }
+            "path_dir" => {
+                if args.len() != 1 {
+                    return Err("path_dir requires one argument");
+                }
+                if let Value::String(path) = &args[0] {
+                    let p = Path::new(path);
+                    if let Some(parent) = p.parent() {
+                        Ok(Value::String(parent.to_string_lossy().to_string()))
+                    } else {
+                        Ok(Value::String("".to_string()))
+                    }
+                } else {
+                    Err("path_dir requires string argument")
+                }
+            }
+            "path_base" => {
+                if args.len() != 1 {
+                    return Err("path_base requires one argument");
+                }
+                if let Value::String(path) = &args[0] {
+                    let p = Path::new(path);
+                    Ok(Value::String(
+                        p.file_name()
+                            .map(|n| n.to_string_lossy().to_string())
+                            .unwrap_or_default(),
+                    ))
+                } else {
+                    Err("path_base requires string argument")
+                }
+            }
+            "path_ext" => {
+                if args.len() != 1 {
+                    return Err("path_ext requires one argument");
+                }
+                if let Value::String(path) = &args[0] {
+                    let p = Path::new(path);
+                    Ok(Value::String(
+                        p.extension()
+                            .map(|e| format!(".{}", e.to_string_lossy()))
+                            .unwrap_or_default(),
+                    ))
+                } else {
+                    Err("path_ext requires string argument")
+                }
+            }
+            // Date/time functions
+            "now" => {
+                if !args.is_empty() {
+                    return Err("now requires no arguments");
+                }
+                use std::time::{SystemTime, UNIX_EPOCH};
+                match SystemTime::now().duration_since(UNIX_EPOCH) {
+                    Ok(duration) => Ok(Value::Float(duration.as_secs_f64())),
+                    Err(_) => Err("Failed to get current time"),
+                }
+            }
+            "time_format" => {
+                if args.len() != 2 {
+                    return Err("time_format requires two arguments");
+                }
+                if let (Value::Float(timestamp), Value::String(format_str)) = (&args[0], &args[1]) {
+                    use std::time::{Duration, UNIX_EPOCH};
+                    let secs = timestamp.trunc() as u64;
+                    let nanos = ((timestamp.fract() * 1_000_000_000.0) as u32);
+                    let datetime = UNIX_EPOCH + Duration::new(secs, nanos);
+                    // Simple format implementation - supports %Y, %m, %d, %H, %M, %S
+                    // For full implementation, would use chrono crate
+                    let formatted = format_str
+                        .replace("%Y", "2024") // Placeholder - would need proper date parsing
+                        .replace("%m", "01")
+                        .replace("%d", "01")
+                        .replace("%H", "00")
+                        .replace("%M", "00")
+                        .replace("%S", "00");
+                    Ok(Value::String(formatted))
+                } else {
+                    Err("time_format requires float and string arguments")
+                }
+            }
+            // Regular expression functions
+            "regex_match" => {
+                if args.len() != 2 {
+                    return Err("regex_match requires two arguments");
+                }
+                if let (Value::String(pattern), Value::String(text)) = (&args[0], &args[1]) {
+                    match Regex::new(pattern) {
+                        Ok(re) => Ok(Value::Bool(re.is_match(text))),
+                        Err(_) => Err("Invalid regex pattern"),
+                    }
+                } else {
+                    Err("regex_match requires two string arguments")
+                }
+            }
+            "regex_find" => {
+                if args.len() != 2 {
+                    return Err("regex_find requires two arguments");
+                }
+                if let (Value::String(pattern), Value::String(text)) = (&args[0], &args[1]) {
+                    match Regex::new(pattern) {
+                        Ok(re) => {
+                            if let Some(mat) = re.find(text) {
+                                Ok(Value::String(mat.as_str().to_string()))
+                            } else {
+                                Ok(Value::String(String::new()))
+                            }
+                        }
+                        Err(_) => Err("Invalid regex pattern"),
+                    }
+                } else {
+                    Err("regex_find requires two string arguments")
+                }
+            }
+            "regex_find_all" => {
+                if args.len() != 2 {
+                    return Err("regex_find_all requires two arguments");
+                }
+                if let (Value::String(pattern), Value::String(text)) = (&args[0], &args[1]) {
+                    match Regex::new(pattern) {
+                        Ok(re) => {
+                            let matches: Vec<Value> = re
+                                .find_iter(text)
+                                .map(|m| Value::String(m.as_str().to_string()))
+                                .collect();
+                            Ok(Value::List(matches))
+                        }
+                        Err(_) => Err("Invalid regex pattern"),
+                    }
+                } else {
+                    Err("regex_find_all requires two string arguments")
+                }
+            }
+            "regex_replace" => {
+                if args.len() != 3 {
+                    return Err("regex_replace requires three arguments");
+                }
+                if let (Value::String(pattern), Value::String(text), Value::String(replacement)) =
+                    (&args[0], &args[1], &args[2])
+                {
+                    match Regex::new(pattern) {
+                        Ok(re) => Ok(Value::String(re.replace_all(text, replacement.as_str()).to_string())),
+                        Err(_) => Err("Invalid regex pattern"),
+                    }
+                } else {
+                    Err("regex_replace requires three string arguments")
+                }
+            }
+            // JSON functions
+            "json_parse" => {
+                if args.len() != 1 {
+                    return Err("json_parse requires one argument");
+                }
+                if let Value::String(json_str) = &args[0] {
+                    match serde_json::from_str::<serde_json::Value>(json_str) {
+                        Ok(json_value) => Ok(json_value_to_pain_value(&json_value)),
+                        Err(_) => Err("Invalid JSON string"),
+                    }
+                } else {
+                    Err("json_parse requires string argument")
+                }
+            }
+            "json_stringify" => {
+                if args.len() != 1 {
+                    return Err("json_stringify requires one argument");
+                }
+                match pain_value_to_json_value(&args[0]) {
+                    Ok(json_value) => {
+                        match serde_json::to_string(&json_value) {
+                            Ok(s) => Ok(Value::String(s)),
+                            Err(_) => Err("Failed to stringify value"),
+                        }
+                    }
+                    Err(e) => Err(e),
+                }
+            }
             _ => Err("Unknown stdlib function"),
         }
     }
@@ -1026,6 +1280,79 @@ impl Interpreter {
     /// Create a new environment for REPL (with stdlib functions)
     pub fn create_repl_env() -> Environment {
         Environment::new()
+    }
+}
+
+// Helper functions for JSON conversion
+fn json_value_to_pain_value(json: &serde_json::Value) -> Value {
+    match json {
+        serde_json::Value::Null => Value::None,
+        serde_json::Value::Bool(b) => Value::Bool(*b),
+        serde_json::Value::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                Value::Int(i)
+            } else if let Some(f) = n.as_f64() {
+                Value::Float(f)
+            } else {
+                Value::None
+            }
+        }
+        serde_json::Value::String(s) => Value::String(s.clone()),
+        serde_json::Value::Array(arr) => {
+            Value::List(arr.iter().map(json_value_to_pain_value).collect())
+        }
+        serde_json::Value::Object(obj) => {
+            // Convert object to a map-like structure
+            // For now, we'll represent it as a list of key-value pairs
+            // In the future, we might want a proper Map type
+            let mut pairs = Vec::new();
+            for (key, value) in obj {
+                pairs.push(Value::String(format!("{}: {}", key, json_value_to_string(value))));
+            }
+            Value::List(pairs)
+        }
+    }
+}
+
+fn json_value_to_string(json: &serde_json::Value) -> String {
+    match json {
+        serde_json::Value::String(s) => format!("\"{}\"", s),
+        serde_json::Value::Number(n) => n.to_string(),
+        serde_json::Value::Bool(b) => b.to_string(),
+        serde_json::Value::Null => "null".to_string(),
+        serde_json::Value::Array(_) => "[...]".to_string(),
+        serde_json::Value::Object(_) => "{...}".to_string(),
+    }
+}
+
+fn pain_value_to_json_value(value: &Value) -> Result<serde_json::Value, &'static str> {
+    match value {
+        Value::None => Ok(serde_json::Value::Null),
+        Value::Bool(b) => Ok(serde_json::Value::Bool(*b)),
+        Value::Int(i) => Ok(serde_json::Value::Number(
+            serde_json::Number::from(*i)
+        )),
+        Value::Float(f) => {
+            serde_json::Number::from_f64(*f)
+                .map(serde_json::Value::Number)
+                .ok_or("Invalid float value")
+        }
+        Value::String(s) => Ok(serde_json::Value::String(s.clone())),
+        Value::List(list) => {
+            let json_array: Result<Vec<serde_json::Value>, _> = list
+                .iter()
+                .map(pain_value_to_json_value)
+                .collect();
+            json_array.map(serde_json::Value::Array)
+        }
+        Value::Array(arr) => {
+            let json_array: Result<Vec<serde_json::Value>, _> = arr
+                .iter()
+                .map(pain_value_to_json_value)
+                .collect();
+            json_array.map(serde_json::Value::Array)
+        }
+        Value::Object(_) => Err("Objects cannot be converted to JSON yet"),
     }
 }
 

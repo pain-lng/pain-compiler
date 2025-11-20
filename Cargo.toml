@@ -26,6 +26,10 @@ rustyline.workspace = true
 # Runtime (for interpreter)
 pain-runtime = { path = "../pain-runtime" }
 
+# Standard library dependencies
+regex = "1.10"
+serde_json = "1.0"
+
 # LLVM JIT (optional feature, requires LLVM 21+ installation)
 # To enable: cargo build --features jit
 # Note: Requires LLVM_SYS_211_PREFIX environment variable set to LLVM installation path
