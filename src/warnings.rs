@@ -85,7 +85,7 @@ impl WarningCollector {
         }
 
         // Check for unused variables
-        for (name, _) in &defined_vars {
+        for name in defined_vars.keys() {
             if !used_vars.contains(name) {
                 // Find the span where variable was defined
                 for stmt in &func.body {
@@ -166,6 +166,7 @@ impl WarningCollector {
         }
     }
 
+    #[allow(clippy::only_used_in_recursion)]
     fn check_expr(
         &mut self,
         expr: &Expr,

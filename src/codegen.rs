@@ -180,6 +180,7 @@ impl CodeGenerator {
         }
     }
 
+    #[allow(clippy::only_used_in_recursion)]
     fn llvm_type_from_ast(&self, ty: &crate::ast::Type) -> String {
         match ty {
             crate::ast::Type::Int => "i64".to_string(),

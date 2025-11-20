@@ -822,11 +822,11 @@ impl Optimizer {
                             .sum();
 
                         // Unroll if total unrolled size is reasonable (< 200 instructions)
-                        if body_size * iteration_count < 200 {
-                            if Self::unroll_loop(func, header_id, &body_blocks, iteration_count) {
-                                // Loop was unrolled, continue to next loop
-                                continue;
-                            }
+                        if body_size * iteration_count < 200
+                            && Self::unroll_loop(func, header_id, &body_blocks, iteration_count)
+                        {
+                            // Loop was unrolled, continue to next loop
+                            continue;
                         }
                     }
                 }
@@ -854,7 +854,7 @@ impl Optimizer {
                     if let Some(lhs_val) = Self::get_constant_value(func, *lhs) {
                         if let Some(rhs_val) = Self::get_constant_value(func, *rhs) {
                             // Both are constants - calculate difference
-                            let diff = (rhs_val - lhs_val).abs() as usize;
+                            let diff = (rhs_val - lhs_val).unsigned_abs() as usize;
                             if diff > 0 && diff <= 8 {
                                 return Some(diff);
                             }

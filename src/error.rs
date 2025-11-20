@@ -35,11 +35,11 @@ fn levenshtein_distance(s1: &str, s2: &str) -> usize {
 
     let mut dp = vec![vec![0; m + 1]; n + 1];
 
-    for i in 0..=n {
-        dp[i][0] = i;
+    for (i, row) in dp.iter_mut().enumerate().take(n + 1) {
+        row[0] = i;
     }
-    for j in 0..=m {
-        dp[0][j] = j;
+    for (j, val) in dp[0].iter_mut().enumerate().take(m + 1) {
+        *val = j;
     }
 
     for i in 1..=n {
@@ -263,7 +263,7 @@ impl<'a> ErrorFormatter<'a> {
             .filter(|l| l.trim().starts_with("help:"))
             .collect();
         if !help_lines.is_empty() {
-            output.push_str("\n");
+            output.push('\n');
             for help in help_lines {
                 output.push_str(&format!("{}\n", help));
             }

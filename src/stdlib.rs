@@ -548,16 +548,14 @@ pub fn get_stdlib_return_type(name: &str, arg_types: &[Type]) -> Option<Type> {
             }
         }
         "regex_find" | "regex_replace" => {
-            if arg_types.len() == 3
+            if (arg_types.len() == 3
                 && arg_types[0] == Type::Str
                 && arg_types[1] == Type::Str
-                && arg_types[2] == Type::Str
-            {
-                Some(Type::Str)
-            } else if name == "regex_find"
-                && arg_types.len() == 2
-                && arg_types[0] == Type::Str
-                && arg_types[1] == Type::Str
+                && arg_types[2] == Type::Str)
+                || (name == "regex_find"
+                    && arg_types.len() == 2
+                    && arg_types[0] == Type::Str
+                    && arg_types[1] == Type::Str)
             {
                 Some(Type::Str)
             } else {

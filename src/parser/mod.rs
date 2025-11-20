@@ -126,6 +126,7 @@ impl<'a> Parser<'a> {
         }
     }
 
+    #[allow(dead_code)]
     fn expect_with_error(&mut self, expected: Token) -> Result<Span, ParseError> {
         match self.next() {
             Some(token_span)
