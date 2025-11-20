@@ -197,6 +197,137 @@ pub fn get_stdlib_functions() -> Vec<StdlibFunction> {
         description: "Prints a value to stdout".to_string(),
     });
 
+    // File I/O functions
+    functions.push(StdlibFunction {
+        name: "read_file".to_string(),
+        params: vec![("path".to_string(), Type::Str)],
+        return_type: Type::Str,
+        description: "Reads the entire contents of a file as a string".to_string(),
+    });
+
+    functions.push(StdlibFunction {
+        name: "write_file".to_string(),
+        params: vec![
+            ("path".to_string(), Type::Str),
+            ("content".to_string(), Type::Str),
+        ],
+        return_type: Type::Dynamic, // void
+        description: "Writes a string to a file".to_string(),
+    });
+
+    functions.push(StdlibFunction {
+        name: "read_lines".to_string(),
+        params: vec![("path".to_string(), Type::Str)],
+        return_type: Type::List(Box::new(Type::Str)),
+        description: "Reads all lines from a file and returns them as a list of strings".to_string(),
+    });
+
+    // Path manipulation functions
+    functions.push(StdlibFunction {
+        name: "path_join".to_string(),
+        params: vec![
+            ("parts".to_string(), Type::List(Box::new(Type::Str))),
+        ],
+        return_type: Type::Str,
+        description: "Joins path components into a single path".to_string(),
+    });
+
+    functions.push(StdlibFunction {
+        name: "path_dir".to_string(),
+        params: vec![("path".to_string(), Type::Str)],
+        return_type: Type::Str,
+        description: "Returns the directory part of a path".to_string(),
+    });
+
+    functions.push(StdlibFunction {
+        name: "path_base".to_string(),
+        params: vec![("path".to_string(), Type::Str)],
+        return_type: Type::Str,
+        description: "Returns the base name (filename) of a path".to_string(),
+    });
+
+    functions.push(StdlibFunction {
+        name: "path_ext".to_string(),
+        params: vec![("path".to_string(), Type::Str)],
+        return_type: Type::Str,
+        description: "Returns the file extension of a path".to_string(),
+    });
+
+    // Date/time functions
+    functions.push(StdlibFunction {
+        name: "now".to_string(),
+        params: vec![],
+        return_type: Type::Float64,
+        description: "Returns the current Unix timestamp (seconds since epoch)".to_string(),
+    });
+
+    functions.push(StdlibFunction {
+        name: "time_format".to_string(),
+        params: vec![
+            ("timestamp".to_string(), Type::Float64),
+            ("format".to_string(), Type::Str),
+        ],
+        return_type: Type::Str,
+        description: "Formats a timestamp according to the given format string".to_string(),
+    });
+
+    // Regular expression functions
+    functions.push(StdlibFunction {
+        name: "regex_match".to_string(),
+        params: vec![
+            ("pattern".to_string(), Type::Str),
+            ("text".to_string(), Type::Str),
+        ],
+        return_type: Type::Bool,
+        description: "Returns true if the pattern matches the text".to_string(),
+    });
+
+    functions.push(StdlibFunction {
+        name: "regex_find".to_string(),
+        params: vec![
+            ("pattern".to_string(), Type::Str),
+            ("text".to_string(), Type::Str),
+        ],
+        return_type: Type::Str,
+        description: "Finds the first match of the pattern in the text, returns empty string if not found".to_string(),
+    });
+
+    functions.push(StdlibFunction {
+        name: "regex_find_all".to_string(),
+        params: vec![
+            ("pattern".to_string(), Type::Str),
+            ("text".to_string(), Type::Str),
+        ],
+        return_type: Type::List(Box::new(Type::Str)),
+        description: "Finds all matches of the pattern in the text".to_string(),
+    });
+
+    functions.push(StdlibFunction {
+        name: "regex_replace".to_string(),
+        params: vec![
+            ("pattern".to_string(), Type::Str),
+            ("text".to_string(), Type::Str),
+            ("replacement".to_string(), Type::Str),
+        ],
+        return_type: Type::Str,
+        description: "Replaces all matches of the pattern in the text with the replacement".to_string(),
+    });
+
+    // JSON functions
+    functions.push(StdlibFunction {
+        name: "json_parse".to_string(),
+        params: vec![("json_str".to_string(), Type::Str)],
+        return_type: Type::Dynamic,
+        description: "Parses a JSON string and returns the corresponding value".to_string(),
+    });
+
+    functions.push(StdlibFunction {
+        name: "json_stringify".to_string(),
+        params: vec![("value".to_string(), Type::Dynamic)],
+        return_type: Type::Str,
+        description: "Converts a value to its JSON string representation".to_string(),
+    });
+
     functions
 }
 
@@ -224,6 +355,21 @@ pub fn is_stdlib_function(name: &str) -> bool {
             | "to_float"
             | "to_string"
             | "print"
+            | "read_file"
+            | "write_file"
+            | "read_lines"
+            | "path_join"
+            | "path_dir"
+            | "path_base"
+            | "path_ext"
+            | "now"
+            | "time_format"
+            | "regex_match"
+            | "regex_find"
+            | "regex_find_all"
+            | "regex_replace"
+            | "json_parse"
+            | "json_stringify"
             | "push"
             | "pop"
     )
@@ -335,6 +481,100 @@ pub fn get_stdlib_return_type(name: &str, arg_types: &[Type]) -> Option<Type> {
         "print" => {
             // print accepts any arguments and returns None (void)
             Some(Type::Dynamic) // Using Dynamic as void placeholder
+        }
+        // File I/O functions
+        "read_file" => {
+            if arg_types.len() == 1 && arg_types[0] == Type::Str {
+                Some(Type::Str)
+            } else {
+                None
+            }
+        }
+        "write_file" => {
+            if arg_types.len() == 2 && arg_types[0] == Type::Str && arg_types[1] == Type::Str {
+                Some(Type::Dynamic) // void
+            } else {
+                None
+            }
+        }
+        "read_lines" => {
+            if arg_types.len() == 1 && arg_types[0] == Type::Str {
+                Some(Type::List(Box::new(Type::Str)))
+            } else {
+                None
+            }
+        }
+        // Path manipulation functions
+        "path_join" => {
+            if arg_types.len() == 1 {
+                if let Type::List(elem) = &arg_types[0] {
+                    if **elem == Type::Str {
+                        return Some(Type::Str);
+                    }
+                }
+            }
+            None
+        }
+        "path_dir" | "path_base" | "path_ext" => {
+            if arg_types.len() == 1 && arg_types[0] == Type::Str {
+                Some(Type::Str)
+            } else {
+                None
+            }
+        }
+        // Date/time functions
+        "now" => {
+            if arg_types.is_empty() {
+                Some(Type::Float64)
+            } else {
+                None
+            }
+        }
+        "time_format" => {
+            if arg_types.len() == 2 && arg_types[0] == Type::Float64 && arg_types[1] == Type::Str {
+                Some(Type::Str)
+            } else {
+                None
+            }
+        }
+        // Regular expression functions
+        "regex_match" => {
+            if arg_types.len() == 2 && arg_types[0] == Type::Str && arg_types[1] == Type::Str {
+                Some(Type::Bool)
+            } else {
+                None
+            }
+        }
+        "regex_find" | "regex_replace" => {
+            if arg_types.len() == 3 && arg_types[0] == Type::Str && arg_types[1] == Type::Str && arg_types[2] == Type::Str {
+                Some(Type::Str)
+            } else if name == "regex_find" && arg_types.len() == 2 && arg_types[0] == Type::Str && arg_types[1] == Type::Str {
+                Some(Type::Str)
+            } else {
+                None
+            }
+        }
+        "regex_find_all" => {
+            if arg_types.len() == 2 && arg_types[0] == Type::Str && arg_types[1] == Type::Str {
+                Some(Type::List(Box::new(Type::Str)))
+            } else {
+                None
+            }
+        }
+        // JSON functions
+        "json_parse" => {
+            if arg_types.len() == 1 && arg_types[0] == Type::Str {
+                Some(Type::Dynamic) // JSON can return various types
+            } else {
+                None
+            }
+        }
+        "json_stringify" => {
+            if arg_types.len() == 1 {
+                Some(Type::Str)
+            } else {
+                None
+            }
         }
         _ => None,
     }
