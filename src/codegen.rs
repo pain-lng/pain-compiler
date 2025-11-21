@@ -999,7 +999,7 @@ impl CodeGenerator {
                     } else {
                         "i64".to_string() // Fallback
                     };
-                    
+
                     // If this is main function with non-void return, print the value before returning
                     if let Some(func_id) = self.current_function {
                         if let Some(func) = self.ir.functions.get(func_id.0 as usize) {
@@ -1014,7 +1014,7 @@ impl CodeGenerator {
                                 } else if ret_type == "i1" {
                                     // Print boolean
                                     let result_str = self.new_register();
-                                    
+
                                     // Select string based on boolean value
                                     self.llvm_code.push_str(&format!(
                                         "  {} = select i1 {}, i8* getelementptr inbounds ([5 x i8], [5 x i8]* @str.true, i64 0, i64 0), i8* getelementptr inbounds ([6 x i8], [6 x i8]* @str.false, i64 0, i64 0)\n",
@@ -1028,7 +1028,7 @@ impl CodeGenerator {
                             }
                         }
                     }
-                    
+
                     self.llvm_code
                         .push_str(&format!("  ret {} {}\n", ret_type, val_str));
                 } else {
