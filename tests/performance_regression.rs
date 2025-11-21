@@ -101,7 +101,7 @@ fn test_type_check_performance() {
     }
     source.push_str("    return 0");
 
-    let program = parse(source).unwrap();
+    let program = parse(&source).unwrap();
     let duration = measure_operation(
         || {
             let _ = type_check_program(&program);
@@ -162,7 +162,7 @@ fn test_ir_build_performance() {
     }
     source.push_str("    return 0");
 
-    let program = parse(source).unwrap();
+    let program = parse(&source).unwrap();
     type_check_program(&program).unwrap();
 
     let duration = measure_operation(
