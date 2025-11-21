@@ -478,7 +478,11 @@ fn check(input: &PathBuf) -> anyhow::Result<()> {
 }
 
 fn format_file(input: &PathBuf, output: Option<&PathBuf>, stdout: bool) -> anyhow::Result<()> {
-    println!("Formatting: {:?}", input);
+    if stdout {
+        eprintln!("Formatting: {:?}", input);
+    } else {
+        println!("Formatting: {:?}", input);
+    }
 
     let source = fs::read_to_string(input)?;
     let program = parse(&source).map_err(|e| anyhow::anyhow!("Parse error: {}", e))?;
