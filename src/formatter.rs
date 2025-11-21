@@ -35,10 +35,59 @@ impl Formatter {
     fn format_item(&mut self, item: &Item) {
         match item {
             Item::Function(func) => self.format_function(func),
-            Item::Class(_class) => {
-                // TODO: Format classes
-            }
+            Item::Class(class) => self.format_class(class),
         }
+    }
+
+    fn format_class(&mut self, class: &Class) {
+        // Format doc comment if present
+        if let Some(ref doc) = class.doc {
+            self.write_indent();
+            self.write("\"\"\"");
+            self.write(doc);
+            self.write("\"\"\"");
+            self.newline();
+        }
+
+        // Format attributes
+        for attr in &class.attrs {
+            self.write_indent();
+            self.write(&format!("@{}\n", attr.name));
+        }
+
+        // Class signature
+        self.write_indent();
+        self.write("class ");
+        self.write(&class.name);
+        self.write(":");
+        self.newline();
+
+        // Class body
+        self.indent();
+
+        // Format fields
+        for field in &class.fields {
+            self.write_indent();
+            if field.mutable {
+                self.write("var ");
+            } else {
+                self.write("let ");
+            }
+            self.write(&field.name);
+            self.write(": ");
+            self.format_type(&field.ty);
+            self.newline();
+        }
+
+        // Format methods
+        for (i, method) in class.methods.iter().enumerate() {
+            if !class.fields.is_empty() || i > 0 {
+                self.newline();
+            }
+            self.format_function(method);
+        }
+
+        self.dedent();
     }
 
     fn format_function(&mut self, func: &Function) {
