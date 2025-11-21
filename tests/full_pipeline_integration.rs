@@ -251,8 +251,8 @@ fn test_full_pipeline_edge_cases() {
     let test_cases = vec![
         ("fn main() -> int:\n    return 0", "zero"),
         ("fn main() -> int:\n    return -1", "negative"),
-        ("fn main() -> bool:\n    return True", "bool_true"),
-        ("fn main() -> bool:\n    return False", "bool_false"),
+        ("fn main() -> bool:\n    return true", "bool_true"),
+        ("fn main() -> bool:\n    return false", "bool_false"),
     ];
 
     for (source, name) in test_cases {
