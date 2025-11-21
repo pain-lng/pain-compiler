@@ -17,7 +17,7 @@ fn prop_parse_integer_literals() {
 /// Property: Any valid function with integer parameters should parse
 #[test]
 fn prop_parse_function_with_params() {
-    proptest!(|(name in "[a-z][a-z0-9_]*", a in 0i64..100, b in 0i64..100)| {
+    proptest!(|(name in "[a-z][a-z0-9_]*", _a in 0i64..100, _b in 0i64..100)| {
         let source = format!(
             "fn {}(x: int, y: int) -> int:\n    return x + y",
             name
@@ -68,7 +68,7 @@ fn prop_round_trip_pipeline() {
         };
 
         // Type check
-        let _ = match type_check_program(&program) {
+        match type_check_program(&program) {
             Ok(_) => (),
             Err(e) => {
                 prop_assume!(false, "Type check failed: {:?}", e);
@@ -151,7 +151,7 @@ fn prop_optimizer_preserves_semantics() {
             Err(_) => return Ok(()),
         };
 
-        let _ = match type_check_program(&program) {
+        match type_check_program(&program) {
             Ok(_) => (),
             Err(_) => return Ok(()),
         };
@@ -293,9 +293,9 @@ fn prop_type_checker_accepts_correct_types() {
 /// Property: Type checker should reject wrong return types
 #[test]
 fn prop_type_checker_rejects_wrong_return_type() {
-    proptest!(|(n in -100i64..100)| {
+    proptest!(|(_n in -100i64..100)| {
         // Function declares int return but returns string
-        let source = format!("fn test() -> int:\n    return \"not an int\"");
+        let source = "fn test() -> int:\n    return \"not an int\"".to_string();
         let program = match parse(&source) {
             Ok(p) => p,
             Err(_) => return Ok(()),
@@ -372,7 +372,7 @@ fn prop_ir_builder_generates_valid_ir() {
             Err(_) => return Ok(()),
         };
 
-        let _ = match type_check_program(&program) {
+        match type_check_program(&program) {
             Ok(_) => (),
             Err(_) => return Ok(()),
         };
@@ -404,7 +404,7 @@ fn prop_codegen_generates_valid_llvm() {
             Err(_) => return Ok(()),
         };
 
-        let _ = match type_check_program(&program) {
+        match type_check_program(&program) {
             Ok(_) => (),
             Err(_) => return Ok(()),
         };

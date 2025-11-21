@@ -101,7 +101,7 @@ fn test_type_check_performance() {
     }
     source.push_str("    return 0");
 
-    let program = parse(&source).unwrap();
+    let program = parse(source).unwrap();
     let duration = measure_operation(
         || {
             let _ = type_check_program(&program);
@@ -162,7 +162,7 @@ fn test_ir_build_performance() {
     }
     source.push_str("    return 0");
 
-    let program = parse(&source).unwrap();
+    let program = parse(source).unwrap();
     type_check_program(&program).unwrap();
 
     let duration = measure_operation(
@@ -192,7 +192,7 @@ fn test_optimization_performance() {
         i = i + 1
     return sum";
 
-    let program = parse(&source).unwrap();
+    let program = parse(source).unwrap();
     type_check_program(&program).unwrap();
     let ir_builder = IrBuilder::new();
     let ir = ir_builder.build(&program);
@@ -221,7 +221,7 @@ fn test_codegen_performance() {
 fn main() -> int:
     return add(1, 2)";
 
-    let program = parse(&source).unwrap();
+    let program = parse(source).unwrap();
     type_check_program(&program).unwrap();
     let ir_builder = IrBuilder::new();
     let ir = ir_builder.build(&program);
@@ -268,7 +268,7 @@ fn test_memory_usage_simple() {
     // Test that simple programs don't use excessive memory
     let source = "fn main() -> int:\n    return 42";
 
-    let program = parse(&source).unwrap();
+    let program = parse(source).unwrap();
     let _ = type_check_program(&program);
     let ir_builder = IrBuilder::new();
     let ir = ir_builder.build(&program);
