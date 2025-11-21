@@ -2105,3 +2105,97 @@ fn main() -> int:
         assert_eq!(i, 256, "power(2, 8) should be 256");
     }
 }
+
+#[test]
+fn test_pml_parse_function() {
+    let source = r#"
+fn main():
+    let pml_source = "title: \"Hello\"\nwidth: 400"
+    let doc = pml_parse(pml_source)
+    return 0
+"#;
+
+    let program = parse(source).unwrap();
+    type_check_program(&program).unwrap();
+    let mut interpreter = Interpreter::new().unwrap();
+    let result = interpreter.interpret(&program);
+    assert!(result.is_ok(), "pml_parse should work: {:?}", result.err());
+}
+
+#[test]
+fn test_pml_parse_simple_map() {
+    let source = r#"
+fn main():
+    let pml_source = "title: \"Hello\""
+    let doc = pml_parse(pml_source)
+    return 0
+"#;
+
+    let program = parse(source).unwrap();
+    type_check_program(&program).unwrap();
+    let mut interpreter = Interpreter::new().unwrap();
+    let result = interpreter.interpret(&program);
+    assert!(
+        result.is_ok(),
+        "pml_parse should parse simple map: {:?}",
+        result.err()
+    );
+}
+
+#[test]
+fn test_pml_parse_nested_structure() {
+    let source = r#"
+fn main():
+    let pml_source = "window:\n\ttitle: \"Demo\"\n\twidth: 400"
+    let doc = pml_parse(pml_source)
+    return 0
+"#;
+
+    let program = parse(source).unwrap();
+    type_check_program(&program).unwrap();
+    let mut interpreter = Interpreter::new().unwrap();
+    let result = interpreter.interpret(&program);
+    assert!(
+        result.is_ok(),
+        "pml_parse should parse nested structure: {:?}",
+        result.err()
+    );
+}
+
+#[test]
+fn test_pml_parse_list() {
+    let source = r#"
+fn main():
+    let pml_source = "items:\n\t- \"apple\"\n\t- \"banana\""
+    let doc = pml_parse(pml_source)
+    return 0
+"#;
+
+    let program = parse(source).unwrap();
+    type_check_program(&program).unwrap();
+    let mut interpreter = Interpreter::new().unwrap();
+    let result = interpreter.interpret(&program);
+    assert!(
+        result.is_ok(),
+        "pml_parse should parse list: {:?}",
+        result.err()
+    );
+}
+
+#[test]
+fn test_pml_parse_invalid_syntax() {
+    let source = r#"
+fn main():
+    let pml_source = "invalid: syntax: error"
+    let doc = pml_parse(pml_source)
+    return 0
+"#;
+
+    let program = parse(source).unwrap();
+    type_check_program(&program).unwrap();
+    let mut interpreter = Interpreter::new().unwrap();
+    // Should handle error gracefully (either return error or parse what it can)
+    let result = interpreter.interpret(&program);
+    // For now, just verify it doesn't panic
+    let _ = result;
+}

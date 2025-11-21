@@ -16,6 +16,9 @@ pub mod llvm_tools;
 pub mod mlir_codegen;
 pub mod optimizations;
 pub mod parser;
+pub mod pml;
+pub mod pml_lexer;
+pub mod pml_parser;
 pub mod span;
 pub mod stdlib;
 pub mod type_checker;
@@ -34,6 +37,7 @@ pub use llvm_tools::{merge_profiles, PgoMode};
 pub use mlir_codegen::MlirCodeGenerator;
 pub use optimizations::Optimizer;
 pub use parser::{parse, parse_with_recovery};
+pub use pml_parser::parse_pml;
 pub use span::{Position, PositionTracker, Span};
 pub use stdlib::{get_stdlib_functions, get_stdlib_return_type, is_stdlib_function};
 pub use type_checker::{

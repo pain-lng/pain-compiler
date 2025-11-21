@@ -1243,6 +1243,35 @@ impl Interpreter {
                     Err(e) => Err(e),
                 }
             }
+            "pml_load_file" => {
+                if args.len() != 1 {
+                    return Err("pml_load_file requires one argument");
+                }
+                if let Value::String(path) = &args[0] {
+                    match fs::read_to_string(path) {
+                        Ok(content) => match crate::pml_parser::parse_pml(&content) {
+                            Ok(node) => Ok(node.to_value()),
+                            Err(_) => Err("PML parse error"),
+                        },
+                        Err(_) => Err("Failed to read PML file"),
+                    }
+                } else {
+                    Err("pml_load_file requires string argument")
+                }
+            }
+            "pml_parse" => {
+                if args.len() != 1 {
+                    return Err("pml_parse requires one argument");
+                }
+                if let Value::String(source) = &args[0] {
+                    match crate::pml_parser::parse_pml(source) {
+                        Ok(node) => Ok(node.to_value()),
+                        Err(_) => Err("PML parse error"),
+                    }
+                } else {
+                    Err("pml_parse requires string argument")
+                }
+            }
             _ => Err("Unknown stdlib function"),
         }
     }

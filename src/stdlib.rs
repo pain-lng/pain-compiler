@@ -330,6 +330,21 @@ pub fn get_stdlib_functions() -> Vec<StdlibFunction> {
         description: "Converts a value to its JSON string representation".to_string(),
     });
 
+    // PML (Pain Markup Language) functions
+    functions.push(StdlibFunction {
+        name: "pml_load_file".to_string(),
+        params: vec![("path".to_string(), Type::Str)],
+        return_type: Type::Dynamic,
+        description: "Loads and parses a PML file, returns the parsed value".to_string(),
+    });
+
+    functions.push(StdlibFunction {
+        name: "pml_parse".to_string(),
+        params: vec![("source".to_string(), Type::Str)],
+        return_type: Type::Dynamic,
+        description: "Parses a PML source string and returns the parsed value".to_string(),
+    });
+
     functions
 }
 
@@ -372,6 +387,8 @@ pub fn is_stdlib_function(name: &str) -> bool {
             | "regex_replace"
             | "json_parse"
             | "json_stringify"
+            | "pml_load_file"
+            | "pml_parse"
             | "push"
             | "pop"
     )
@@ -580,6 +597,20 @@ pub fn get_stdlib_return_type(name: &str, arg_types: &[Type]) -> Option<Type> {
         "json_stringify" => {
             if arg_types.len() == 1 {
                 Some(Type::Str)
+            } else {
+                None
+            }
+        }
+        "pml_load_file" => {
+            if arg_types.len() == 1 && arg_types[0] == Type::Str {
+                Some(Type::Dynamic) // PML can return various types
+            } else {
+                None
+            }
+        }
+        "pml_parse" => {
+            if arg_types.len() == 1 && arg_types[0] == Type::Str {
+                Some(Type::Dynamic) // PML can return various types
             } else {
                 None
             }
