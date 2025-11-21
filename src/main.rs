@@ -1,19 +1,18 @@
 // Pain compiler CLI entry point
 
 use clap::{Parser, Subcommand};
+use glob::glob;
 use pain_compiler::interpreter::Environment;
 use pain_compiler::{
     llvm_tools::{self, PgoMode},
-    parse, type_check_program_with_context, CodeGenerator, DocGenerator,
-    ErrorFormatter, Formatter, Interpreter, IrBuilder, Item, MlirCodeGenerator, Optimizer,
-    TypeContext, WarningCollector,
+    parse, type_check_program_with_context, CodeGenerator, DocGenerator, ErrorFormatter, Formatter,
+    Interpreter, IrBuilder, Item, MlirCodeGenerator, Optimizer, TypeContext, WarningCollector,
 };
 use rustyline::error::ReadlineError;
 use rustyline::DefaultEditor;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use glob::glob;
 
 #[derive(Parser)]
 #[command(name = "pain")]
@@ -223,6 +222,7 @@ fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build(
     input: &PathBuf,
     output: Option<&PathBuf>,
@@ -323,9 +323,7 @@ fn build(
                     Some("generate") => PgoMode::Generate,
                     Some("use") => PgoMode::Use,
                     Some(_) => {
-                        return Err(anyhow::anyhow!(
-                            "Invalid PGO mode. Use 'generate' or 'use'"
-                        ));
+                        return Err(anyhow::anyhow!("Invalid PGO mode. Use 'generate' or 'use'"));
                     }
                     None => PgoMode::None,
                 };
@@ -341,7 +339,7 @@ fn build(
                 )?;
 
                 println!("✓ Executable built successfully: {:?}", executable_path);
-                
+
                 if pgo_mode == PgoMode::Generate {
                     println!("ℹ Profile data generated. Run your program, then rebuild with --pgo use to optimize.");
                 }
@@ -839,9 +837,9 @@ fn merge_pgo_profiles(inputs: &[String], output: &PathBuf) -> anyhow::Result<()>
     if inputs.is_empty() {
         return Err(anyhow::anyhow!("No input profile files specified"));
     }
-    
+
     let mut profile_files = Vec::new();
-    
+
     // Process each input - could be a glob pattern or a direct path
     for input in inputs {
         // Check if it's a glob pattern (contains *, ?, [)
@@ -870,18 +868,18 @@ fn merge_pgo_profiles(inputs: &[String], output: &PathBuf) -> anyhow::Result<()>
             }
         }
     }
-    
+
     if profile_files.is_empty() {
         return Err(anyhow::anyhow!(
             "No valid profile files found. Please check that the specified files/patterns exist."
         ));
     }
-    
+
     println!("Merging {} profile file(s)...", profile_files.len());
     let profile_paths: Vec<&Path> = profile_files.iter().map(|p| p.as_path()).collect();
     llvm_tools::merge_profiles(&profile_paths, output)?;
     println!("✓ Profile data merged: {:?}", output);
-    
+
     Ok(())
 }
 
@@ -894,34 +892,35 @@ fn run_pgo_pipeline(
     keep_intermediates: bool,
 ) -> anyhow::Result<()> {
     println!("=== PGO Pipeline ===");
-    
+
     // Step 1: Build with profile generation
     println!("\n[1/4] Building with profile generation...");
     // Use temporary name for instrumented executable to avoid overwriting
     let mut instrumented_path = input.clone();
     instrumented_path.set_extension("");
-    let stem = instrumented_path.file_stem()
+    let stem = instrumented_path
+        .file_stem()
         .and_then(|s| s.to_str())
         .unwrap_or("main");
     instrumented_path.set_file_name(format!("{}_instrumented", stem));
     #[cfg(target_os = "windows")]
     instrumented_path.set_extension("exe");
-    
-    let profile_dir_path = profile_dir.map(|p| p.to_path_buf()).unwrap_or_else(|| {
-        PathBuf::from(".")
-    });
-    
+
+    let profile_dir_path = profile_dir
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| PathBuf::from("."));
+
     build(
         input,
         Some(&instrumented_path),
         true, // executable
         None, // target
         keep_intermediates,
-        "llvm", // backend
-        Some("generate"), // pgo
+        "llvm",                  // backend
+        Some("generate"),        // pgo
         Some(&profile_dir_path), // pgo_profile
     )?;
-    
+
     // Step 2: Collect profile data
     println!("\n[2/4] Collecting profile data...");
     if let Some(cmd) = collect_command {
@@ -933,7 +932,10 @@ fn run_pgo_pipeline(
         let program = parts.remove(0);
         let status = Command::new(program)
             .args(&parts)
-            .env("LLVM_PROFILE_FILE", profile_dir_path.join("default-%p.profraw"))
+            .env(
+                "LLVM_PROFILE_FILE",
+                profile_dir_path.join("default-%p.profraw"),
+            )
             .status()?;
         if !status.success() {
             return Err(anyhow::anyhow!("Profile collection command failed"));
@@ -941,19 +943,25 @@ fn run_pgo_pipeline(
     } else {
         // Run the executable
         let status = Command::new(&instrumented_path)
-            .env("LLVM_PROFILE_FILE", profile_dir_path.join("default-%p.profraw"))
+            .env(
+                "LLVM_PROFILE_FILE",
+                profile_dir_path.join("default-%p.profraw"),
+            )
             .status()?;
         if !status.success() {
             return Err(anyhow::anyhow!("Profile collection failed"));
         }
     }
-    
+
     // Step 3: Merge profile data
     println!("\n[3/4] Merging profile data...");
     let profdata_path = profile_dir_path.join("default.profdata");
-    let glob_pattern = profile_dir_path.join("*.profraw").to_string_lossy().to_string();
+    let glob_pattern = profile_dir_path
+        .join("*.profraw")
+        .to_string_lossy()
+        .to_string();
     merge_pgo_profiles(&[glob_pattern], &profdata_path)?;
-    
+
     // Step 4: Rebuild with profile data
     println!("\n[4/4] Rebuilding with profile data...");
     let optimized_path = if let Some(out) = output {
@@ -961,30 +969,28 @@ fn run_pgo_pipeline(
     } else {
         let mut path = input.clone();
         path.set_extension("");
-        let stem = path.file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("main");
+        let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("main");
         path.set_file_name(format!("{}_optimized", stem));
         #[cfg(target_os = "windows")]
         path.set_extension("exe");
         path
     };
-    
+
     build(
         input,
         Some(&optimized_path),
         true, // executable
         None, // target
         keep_intermediates,
-        "llvm", // backend
-        Some("use"), // pgo
+        "llvm",               // backend
+        Some("use"),          // pgo
         Some(&profdata_path), // pgo_profile
     )?;
-    
+
     println!("\n✓ PGO pipeline completed successfully!");
     println!("  Instrumented executable: {:?}", instrumented_path);
     println!("  Optimized executable: {:?}", optimized_path);
-    
+
     Ok(())
 }
 
@@ -998,15 +1004,15 @@ fn collect_pgo_profiles(
     if !executable.exists() {
         return Err(anyhow::anyhow!("Executable not found: {:?}", executable));
     }
-    
-    let profile_dir_path = profile_dir.map(|p| p.to_path_buf()).unwrap_or_else(|| {
-        PathBuf::from(".")
-    });
-    
+
+    let profile_dir_path = profile_dir
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| PathBuf::from("."));
+
     std::fs::create_dir_all(&profile_dir_path)?;
-    
+
     println!("Collecting profile data ({} run(s))...", runs);
-    
+
     for i in 0..runs {
         println!("  Run {}/{}...", i + 1, runs);
         let profile_file = profile_dir_path.join(format!("default-{}.profraw", i));
@@ -1014,15 +1020,15 @@ fn collect_pgo_profiles(
             .args(args)
             .env("LLVM_PROFILE_FILE", &profile_file)
             .status()?;
-        
+
         if !status.success() {
             eprintln!("Warning: Run {} exited with non-zero status", i + 1);
         }
     }
-    
+
     println!("✓ Profile data collected in {:?}", profile_dir_path);
     println!("  Use 'pain pgo-merge' to merge profile files before rebuilding");
-    
+
     Ok(())
 }
 
