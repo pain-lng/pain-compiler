@@ -48,6 +48,10 @@ optional = true
 version = "0.8"
 optional = true
 
+[build-dependencies]
+# Windows icon embedding
+winres = "0.1"
+
 [dev-dependencies]
 criterion.workspace = true
 proptest = "1.4"

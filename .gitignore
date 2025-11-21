@@ -20,3 +20,9 @@ Thumbs.db
 *.so
 *.dylib
 
+# Generated icon files
+# ICO files are committed (needed for Windows builds)
+# ICNS files are gitignored (only needed on macOS, can be generated)
+resources/icons/macOS/*.icns
+resources/icons/*.iconset
+
