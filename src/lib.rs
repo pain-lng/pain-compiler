@@ -30,6 +30,7 @@ pub use ir::IrProgram;
 pub use ir_builder::IrBuilder;
 pub use jit::{JitEngine, JitFunction};
 pub use lexer::Token;
+pub use llvm_tools::{merge_profiles, PgoMode};
 pub use mlir_codegen::MlirCodeGenerator;
 pub use optimizations::Optimizer;
 pub use parser::{parse, parse_with_recovery};
@@ -39,7 +40,6 @@ pub use type_checker::{
     type_check_program, type_check_program_with_context, TypeContext, TypeError, TypeResult,
 };
 pub use warnings::{Warning, WarningCollector};
-pub use llvm_tools::{PgoMode, merge_profiles};
 
 // Re-export AST types for LSP and other tools
 pub use ast::*;

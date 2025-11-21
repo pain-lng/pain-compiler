@@ -601,10 +601,10 @@ impl<'a> Parser<'a> {
 
     fn parse_parameter(&mut self) -> Result<Parameter, String> {
         let name_span = self.current_span();
-        let name = match self.next() {
+        let name_token_span = match self.next() {
             Some(token_span) if matches!(token_span.token, Token::Ident(_)) => {
                 if let Token::Ident(name) = &token_span.token {
-                    name.clone()
+                    (name.clone(), token_span.span)
                 } else {
                     return Err(format!(
                         "Expected parameter name at {}:{}",
@@ -621,7 +621,38 @@ impl<'a> Parser<'a> {
                 ))
             }
         };
-        self.expect(Token::Colon)?;
+        let (name, name_token_span) = name_token_span;
+
+        // Special case: 'self' parameter can be without type annotation
+        if name == "self" && matches!(self.peek_token(), Some(Token::RParen) | Some(Token::Comma)) {
+            // Use Dynamic type for self parameter without explicit type
+            return Ok(Parameter {
+                name,
+                ty: Type::Dynamic,
+            });
+        }
+
+        // Save the position after parameter name for better error reporting
+        let colon_expected_span = if let Some(token_span) = self.peek() {
+            token_span.span
+        } else {
+            name_token_span
+        };
+
+        // Check for colon - if not found, provide better error message pointing to parameter name
+        match self.expect(Token::Colon) {
+            Ok(_) => {}
+            Err(_) => {
+                // Provide error message pointing to where colon should be (after parameter name)
+                return Err(format!(
+                    "Expected ':' after parameter '{}' at {}:{}",
+                    name,
+                    colon_expected_span.line(),
+                    colon_expected_span.column()
+                ));
+            }
+        }
+
         let ty = self.parse_type()?;
         Ok(Parameter { name, ty })
     }

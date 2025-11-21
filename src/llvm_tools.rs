@@ -314,7 +314,10 @@ pub fn compile_to_executable_with_pgo(
                     cmd.arg("-fprofile-use").arg(prof_path);
                 } else {
                     // Try to find default.profdata in current directory
-                    let default_profdata = executable_path.parent().unwrap_or(Path::new(".")).join("default.profdata");
+                    let default_profdata = executable_path
+                        .parent()
+                        .unwrap_or(Path::new("."))
+                        .join("default.profdata");
                     if default_profdata.exists() {
                         cmd.arg("-fprofile-use").arg(&default_profdata);
                     } else {
@@ -398,25 +401,22 @@ pub fn compile_to_executable_with_pgo(
 
 /// Merge profile data files into a single profile
 /// This is typically needed after collecting profile data with -fprofile-generate
-pub fn merge_profiles(
-    profile_files: &[&Path],
-    output_path: &Path,
-) -> io::Result<()> {
+pub fn merge_profiles(profile_files: &[&Path], output_path: &Path) -> io::Result<()> {
     // Try to find llvm-profdata
     let profdata = find_llvm_profdata()?;
-    
+
     let mut cmd = Command::new(&profdata);
     cmd.arg("merge");
     cmd.arg("-o").arg(output_path);
-    
+
     for profile_file in profile_files {
         if profile_file.exists() {
             cmd.arg(profile_file);
         }
     }
-    
+
     let output = cmd.output()?;
-    
+
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(io::Error::other(format!(
@@ -424,17 +424,21 @@ pub fn merge_profiles(
             stderr
         )));
     }
-    
+
     Ok(())
 }
 
 /// Find llvm-profdata tool
 fn find_llvm_profdata() -> io::Result<String> {
     // Try standard name first
-    if Command::new("llvm-profdata").arg("--version").output().is_ok() {
+    if Command::new("llvm-profdata")
+        .arg("--version")
+        .output()
+        .is_ok()
+    {
         return Ok("llvm-profdata".to_string());
     }
-    
+
     // Try with version suffix
     for version in &["21", "20", "19", "18"] {
         let name = format!("llvm-profdata-{}", version);
@@ -442,7 +446,7 @@ fn find_llvm_profdata() -> io::Result<String> {
             return Ok(name);
         }
     }
-    
+
     // Try Windows path
     #[cfg(target_os = "windows")]
     {
@@ -451,10 +455,10 @@ fn find_llvm_profdata() -> io::Result<String> {
             return Ok(llvm_profdata.to_string());
         }
     }
-    
+
     Err(io::Error::new(
         io::ErrorKind::NotFound,
-        "llvm-profdata not found. Please install LLVM and add it to PATH."
+        "llvm-profdata not found. Please install LLVM and add it to PATH.",
     ))
 }
 
