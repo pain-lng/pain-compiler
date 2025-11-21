@@ -366,8 +366,7 @@ mod tests {
         let source = "";
         let result = parse_pml(source);
         // Empty file should return empty map
-        if result.is_ok() {
-            let node = result.unwrap();
+        if let Ok(node) = result {
             assert_eq!(node.kind, PmlNodeKind::Map);
         }
         // Or it might return an error - both are acceptable for now
@@ -378,8 +377,7 @@ mod tests {
         let source = "# comment 1\n# comment 2";
         let result = parse_pml(source);
         // Comments-only file should return empty map
-        if result.is_ok() {
-            let node = result.unwrap();
+        if let Ok(node) = result {
             assert_eq!(node.kind, PmlNodeKind::Map);
         }
         // Or it might return an error - both are acceptable for now
