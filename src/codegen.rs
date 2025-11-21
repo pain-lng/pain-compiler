@@ -103,6 +103,17 @@ impl CodeGenerator {
         // "%s\n\0" = 4 bytes: '%', 's', '\n', '\0'
         self.llvm_code
             .push_str("@str.fmt.print = private unnamed_addr constant [4 x i8] c\"%s\\0A\\00\"\n");
+        // Add format string for printing integers (%lld\n)
+        self.llvm_code
+            .push_str("@str.fmt.int = private unnamed_addr constant [6 x i8] c\"%lld\\0A\\00\"\n");
+        // Add format string for printing booleans (%s\n)
+        self.llvm_code
+            .push_str("@str.fmt.bool = private unnamed_addr constant [4 x i8] c\"%s\\0A\\00\"\n");
+        // Add string constants for boolean values
+        self.llvm_code
+            .push_str("@str.true = private unnamed_addr constant [5 x i8] c\"true\\00\"\n");
+        self.llvm_code
+            .push_str("@str.false = private unnamed_addr constant [6 x i8] c\"false\\00\"\n");
 
         // Collect all string constants from IR
         for func in &self.ir.functions {
@@ -988,6 +999,36 @@ impl CodeGenerator {
                     } else {
                         "i64".to_string() // Fallback
                     };
+                    
+                    // If this is main function with non-void return, print the value before returning
+                    if let Some(func_id) = self.current_function {
+                        if let Some(func) = self.ir.functions.get(func_id.0 as usize) {
+                            if func.name == "main" && ret_type != "void" {
+                                // Print the return value based on type
+                                if ret_type == "i64" {
+                                    // Print integer
+                                    self.llvm_code.push_str(&format!(
+                                        "  call i32 (i8*, ...) @printf(i8* getelementptr inbounds ([6 x i8], [6 x i8]* @str.fmt.int, i64 0, i64 0), i64 {})\n",
+                                        val_str
+                                    ));
+                                } else if ret_type == "i1" {
+                                    // Print boolean
+                                    let result_str = self.new_register();
+                                    
+                                    // Select string based on boolean value
+                                    self.llvm_code.push_str(&format!(
+                                        "  {} = select i1 {}, i8* getelementptr inbounds ([5 x i8], [5 x i8]* @str.true, i64 0, i64 0), i8* getelementptr inbounds ([6 x i8], [6 x i8]* @str.false, i64 0, i64 0)\n",
+                                        result_str, val_str
+                                    ));
+                                    self.llvm_code.push_str(&format!(
+                                        "  call i32 (i8*, ...) @printf(i8* getelementptr inbounds ([4 x i8], [4 x i8]* @str.fmt.bool, i64 0, i64 0), i8* {})\n",
+                                        result_str
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                    
                     self.llvm_code
                         .push_str(&format!("  ret {} {}\n", ret_type, val_str));
                 } else {
