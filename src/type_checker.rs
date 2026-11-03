@@ -327,8 +327,16 @@ fn infer_expr_type(ctx: &TypeContext, expr: &Expr) -> TypeResult<Type> {
                 }
             })
         }
-        Expr::Add(left, right)
-        | Expr::Sub(left, right)
+        Expr::Add(left, right) => {
+            let left_type = infer_expr_type(ctx, left)?;
+            let right_type = infer_expr_type(ctx, right)?;
+            // String concatenation (supported by the interpreter)
+            if left_type == Type::Str && right_type == Type::Str {
+                return Ok(Type::Str);
+            }
+            infer_binary_op_type(&left_type, &right_type)
+        }
+        Expr::Sub(left, right)
         | Expr::Mul(left, right)
         | Expr::Div(left, right)
         | Expr::Mod(left, right) => {
@@ -549,6 +557,46 @@ mod tests {
         let ctx = TypeContext::new();
         let expr = Expr::Add(Box::new(Expr::Integer(1)), Box::new(Expr::Integer(2)));
         assert_eq!(infer_expr_type(&ctx, &expr).unwrap(), Type::Int);
+    }
+
+    #[test]
+    fn test_string_concat_and_return_checks() {
+        let ok = parse(
+            "fn f(a: str) -> str:
+    return a + \":\" + a",
+        )
+        .unwrap();
+        assert!(type_check_program(&ok).is_ok());
+        let bad_sub = parse(
+            "fn f(a: str) -> str:
+    return a - a",
+        )
+        .unwrap();
+        assert!(type_check_program(&bad_sub).is_err());
+        let bad_ret = parse(
+            "fn f() -> int:
+    return \"x\"",
+        )
+        .unwrap();
+        assert!(type_check_program(&bad_ret).is_err());
+        let arity = parse(
+            "fn g(x: int) -> int:
+    return x
+
+fn main() -> int:
+    return g(1, 2)",
+        )
+        .unwrap();
+        assert!(type_check_program(&arity).is_err());
+        let call_ret = parse(
+            "fn g(x: int) -> int:
+    return x
+
+fn main() -> str:
+    return g(1)",
+        )
+        .unwrap();
+        assert!(type_check_program(&call_ret).is_err());
     }
 
     #[test]
