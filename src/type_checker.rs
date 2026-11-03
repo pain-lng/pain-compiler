@@ -45,6 +45,8 @@ pub struct TypeContext {
     variables: HashMap<String, Type>,
     functions: HashMap<String, Function>,
     classes: HashMap<String, Class>, // Class definitions
+    /// Declared return type of the function/method being checked (None = unchecked)
+    return_type: Option<Type>,
 }
 
 impl TypeContext {
@@ -53,6 +55,7 @@ impl TypeContext {
             variables: HashMap::new(),
             functions: HashMap::new(),
             classes: HashMap::new(),
+            return_type: None,
         }
     }
 
@@ -141,6 +144,7 @@ fn type_check_class(ctx: &mut TypeContext, class: &Class) -> TypeResult<()> {
         // Add 'self' parameter implicitly
         let mut method_ctx = class_ctx.clone();
         method_ctx.add_variable("self".to_string(), Type::Named(class.name.clone()));
+        method_ctx.return_type = method.return_type.clone();
 
         // Add method parameters
         for param in &method.params {
@@ -160,6 +164,7 @@ fn type_check_class(ctx: &mut TypeContext, class: &Class) -> TypeResult<()> {
 fn type_check_function(ctx: &mut TypeContext, func: &Function) -> TypeResult<()> {
     // Create new scope for function parameters
     let mut func_ctx = ctx.clone();
+    func_ctx.return_type = func.return_type.clone();
 
     // Add parameters to context
     for param in &func.params {
@@ -169,11 +174,6 @@ fn type_check_function(ctx: &mut TypeContext, func: &Function) -> TypeResult<()>
     // Type check body
     for stmt in &func.body {
         type_check_statement(&mut func_ctx, stmt)?;
-    }
-
-    // Check return type if specified
-    if let Some(_expected_return) = &func.return_type {
-        // TODO: Check that all return statements match expected_return
     }
 
     Ok(())
@@ -211,7 +211,17 @@ fn type_check_statement(ctx: &mut TypeContext, stmt: &Statement) -> TypeResult<T
         }
         Statement::Return(expr) => {
             if let Some(expr) = expr {
-                infer_expr_type(ctx, expr)
+                let found = infer_expr_type(ctx, expr)?;
+                if let Some(expected) = &ctx.return_type {
+                    if !types_compatible(&found, expected) {
+                        return Err(TypeError::TypeMismatch {
+                            expected: expected.clone(),
+                            found,
+                            span: get_expr_span(expr),
+                        });
+                    }
+                }
+                Ok(found)
             } else {
                 Ok(Type::Dynamic) // void return
             }
@@ -393,7 +403,32 @@ fn infer_expr_type(ctx: &TypeContext, expr: &Expr) -> TypeResult<Type> {
                 }
             }
 
-            // TODO: Check user-defined function calls
+            // User-defined functions: arity and argument types
+            if let Expr::Ident(name) = callee.as_ref() {
+                if let Some(func) = ctx.functions.get(name) {
+                    if func.params.len() != arg_types.len() {
+                        return Err(TypeError::CannotInferType {
+                            message: format!(
+                                "function '{}' takes {} argument(s), {} given",
+                                name,
+                                func.params.len(),
+                                arg_types.len()
+                            ),
+                            span: get_expr_span(expr),
+                        });
+                    }
+                    for ((param, arg_type), arg) in func.params.iter().zip(&arg_types).zip(args) {
+                        if !types_compatible(arg_type, &param.ty) {
+                            return Err(TypeError::TypeMismatch {
+                                expected: param.ty.clone(),
+                                found: arg_type.clone(),
+                                span: get_expr_span(arg),
+                            });
+                        }
+                    }
+                    return Ok(func.return_type.clone().unwrap_or(Type::Dynamic));
+                }
+            }
             Ok(Type::Dynamic)
         }
         Expr::Index(container, index) => {
