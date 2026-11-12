@@ -2199,3 +2199,50 @@ fn main():
     // For now, just verify it doesn't panic
     let _ = result;
 }
+
+// ---- Native code generation regressions (text-level, no LLVM tools needed) ----
+
+fn llvm_ir_for(source: &str) -> String {
+    let program = parse(source).unwrap();
+    type_check_program(&program).unwrap();
+    let ir = Optimizer::optimize(IrBuilder::new().build(&program));
+    CodeGenerator::new(ir).generate()
+}
+
+#[test]
+fn test_codegen_recursive_call_survives_inlining() {
+    let ir = llvm_ir_for(
+        "fn fact(n: int) -> int:\n    if n <= 1:\n        return 1\n    return n * fact(n - 1)\n\nfn main() -> int:\n    return fact(15)",
+    );
+    // The multi-block, recursive callee must stay a call (it used to be half-inlined)
+    assert!(ir.contains("call i64 @fact("), "{}", ir);
+}
+
+#[test]
+fn test_codegen_loop_variables_use_stack_slots() {
+    let ir = llvm_ir_for(
+        "fn sum(n: int) -> int:\n    var result = 0\n    var i = 0\n    while i <= n:\n        result = result + i\n        i = i + 1\n    return result\n\nfn main() -> int:\n    return sum(10)",
+    );
+    assert!(ir.contains("alloca i64"), "{}", ir);
+    assert!(ir.contains("load i64"), "{}", ir);
+    assert!(ir.contains("store i64"), "{}", ir);
+}
+
+#[test]
+fn test_codegen_straight_line_variables_stay_in_registers() {
+    let ir = llvm_ir_for("fn main() -> int:\n    var x = 5\n    x = x * 3\n    return x");
+    assert!(!ir.contains("alloca"), "{}", ir);
+}
+
+#[test]
+fn test_codegen_user_function_shadows_stdlib_name() {
+    let ir = llvm_ir_for(
+        "fn max(a: int, b: int) -> int:\n    if a > b:\n        return a\n    else:\n        return b\n\nfn main() -> int:\n    return max(1, 2)",
+    );
+    assert!(!ir.contains("declare i64 @max"), "{}", ir);
+    assert!(ir.contains("call i64 @max(i64"), "{}", ir);
+    // The block after an if/else that returns on both sides must not `ret void`
+    let max_body = &ir[ir.find("define i64 @max").unwrap()..];
+    let max_body = &max_body[..max_body.find("\n}").unwrap()];
+    assert!(!max_body.contains("ret void"), "{}", max_body);
+}

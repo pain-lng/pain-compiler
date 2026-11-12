@@ -58,7 +58,10 @@ impl CodeGenerator {
     pub fn generate_with_target(mut self, target_triple: Option<&str>) -> String {
         self.llvm_code.push_str("; LLVM IR generated from Pain\n");
         self.llvm_code.push_str("target datalayout = \"e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128\"\n");
-        let triple = target_triple.unwrap_or("x86_64-unknown-linux-gnu");
+        // Default to the host platform: a fixed Linux triple produced ELF objects
+        // that the linker rejects on Windows and macOS
+        let host_triple = crate::llvm_tools::detect_target_triple();
+        let triple = target_triple.unwrap_or(&host_triple);
         self.llvm_code
             .push_str(&format!("target triple = \"{}\"\n\n", triple));
 
@@ -150,7 +153,10 @@ impl CodeGenerator {
         self.llvm_code.push_str("declare i8* @malloc(i64)\n");
         self.llvm_code.push_str("declare void @free(i8*)\n\n");
         let stdlib_funcs = get_stdlib_functions();
-        let mut declared = std::collections::HashSet::new();
+        // A user function with a stdlib name (e.g. `max`) is defined below; declaring
+        // it as well is an "invalid redefinition" for LLVM
+        let mut declared: std::collections::HashSet<String> =
+            self.ir.functions.iter().map(|f| f.name.clone()).collect();
 
         for func in &stdlib_funcs {
             // Avoid duplicate declarations
@@ -285,8 +291,10 @@ impl CodeGenerator {
         }
     }
 
-    fn generate_instruction(&mut self, inst: &Instruction, _result_id: ValueId) -> String {
-        let result = self.new_register();
+    fn generate_instruction(&mut self, inst: &Instruction, result_id: ValueId) -> String {
+        // Named after the IR value, so a use that is emitted before the definition
+        // (a later block in text order) resolves to the same name
+        let result = Self::value_name(result_id);
         match inst {
             Instruction::ConstInt { value } => {
                 self.llvm_code
@@ -1032,7 +1040,20 @@ impl CodeGenerator {
                     self.llvm_code
                         .push_str(&format!("  ret {} {}\n", ret_type, val_str));
                 } else {
-                    self.llvm_code.push_str("  ret void\n");
+                    // No value: `ret void`, or for a typed function (the block after
+                    // an if/else whose branches both return) a zero of that type
+                    let ret_type = self
+                        .current_function
+                        .and_then(|func_id| self.ir.functions.get(func_id.0 as usize))
+                        .map(|func| self.llvm_type(&func.return_type))
+                        .unwrap_or_else(|| "void".to_string());
+                    let ret = match ret_type.as_str() {
+                        "void" => "  ret void\n".to_string(),
+                        "double" | "float" => format!("  ret {} 0.0\n", ret_type),
+                        ty if ty.ends_with('*') || ty == "ptr" => format!("  ret {} null\n", ty),
+                        ty => format!("  ret {} 0\n", ty),
+                    };
+                    self.llvm_code.push_str(&ret);
                 }
             }
             Instruction::Branch {
@@ -1122,7 +1143,13 @@ impl CodeGenerator {
         self.value_map
             .get(&value_id)
             .cloned()
-            .unwrap_or_else(|| format!("%{}", value_id.0))
+            .unwrap_or_else(|| Self::value_name(value_id))
+    }
+
+    /// LLVM name of an IR value. The dot keeps it apart from parameter names and
+    /// from the numbered temporaries of `new_register`.
+    fn value_name(value_id: ValueId) -> String {
+        format!("%v.{}", value_id.0)
     }
 
     fn new_register(&mut self) -> String {

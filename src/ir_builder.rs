@@ -3,7 +3,7 @@
 use crate::ast::*;
 use crate::ir::*;
 use crate::stdlib::is_stdlib_function;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 pub struct IrBuilder {
     program: IrProgram,
@@ -15,6 +15,12 @@ pub struct IrBuilder {
     // Loop context for break/continue
     loop_headers: Vec<BlockId>,   // Stack of loop header blocks
     loop_continues: Vec<BlockId>, // Stack of loop continue blocks (after loop)
+    // Variables reassigned inside a branch or loop live in stack slots (alloca +
+    // load/store): the name -> value map above is only valid for straight-line code
+    slot_vars: HashSet<String>,
+    slots: HashMap<String, ValueId>, // Variable name -> pointer to its slot
+    // Names of all user functions: they shadow stdlib functions of the same name
+    user_functions: HashSet<String>,
 }
 
 impl IrBuilder {
@@ -33,6 +39,9 @@ impl IrBuilder {
             current_function: None,
             current_block: None,
             variable_map: HashMap::new(),
+            slot_vars: HashSet::new(),
+            slots: HashMap::new(),
+            user_functions: HashSet::new(),
             function_map: HashMap::new(),
             class_map: HashMap::new(),
             loop_headers: Vec::new(),
@@ -42,6 +51,12 @@ impl IrBuilder {
 
     /// Build IR from AST program
     pub fn build(mut self, ast: &Program) -> IrProgram {
+        for item in &ast.items {
+            if let Item::Function(func) = item {
+                self.user_functions.insert(func.name.clone());
+            }
+        }
+
         // First pass: build structs from classes
         for item in &ast.items {
             if let Item::Class(class) = item {
@@ -192,6 +207,15 @@ impl IrBuilder {
         self.current_function = Some(func_id);
         self.current_block = Some(entry_block_id);
 
+        // Parameters that are reassigned under control flow get a slot up front
+        Self::collect_slot_vars(&func.body, false, &mut self.slot_vars);
+        for param in &func.params {
+            if self.slot_vars.contains(&param.name) {
+                let param_value = self.variable_map[&param.name];
+                self.write_var(&param.name, param_value);
+            }
+        }
+
         // Build function body
         for stmt in &func.body {
             self.build_statement(stmt);
@@ -212,8 +236,102 @@ impl IrBuilder {
         self.current_function = None;
         self.current_block = None;
         self.variable_map.clear();
+        self.slot_vars.clear();
+        self.slots.clear();
         self.loop_headers.clear();
         self.loop_continues.clear();
+    }
+
+    /// Names assigned to (`x = ...`, `x += ...`) inside an if/while/for body
+    fn collect_slot_vars(body: &[Statement], nested: bool, out: &mut HashSet<String>) {
+        for stmt in body {
+            match stmt {
+                Statement::Expr(
+                    Expr::Assign(lhs, _)
+                    | Expr::AddAssign(lhs, _)
+                    | Expr::SubAssign(lhs, _)
+                    | Expr::MulAssign(lhs, _)
+                    | Expr::DivAssign(lhs, _),
+                ) if nested => {
+                    if let Expr::Ident(name) = lhs.as_ref() {
+                        out.insert(name.clone());
+                    }
+                }
+                Statement::If { then, else_, .. } => {
+                    Self::collect_slot_vars(then, true, out);
+                    if let Some(else_body) = else_ {
+                        Self::collect_slot_vars(else_body, true, out);
+                    }
+                }
+                Statement::While { body, .. } | Statement::For { body, .. } => {
+                    Self::collect_slot_vars(body, true, out);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// Append an instruction to the given block and return its value
+    fn push_instruction(&mut self, block_id: BlockId, instr: Instruction) -> ValueId {
+        let value_id = self.program.new_value_id();
+        let func_id = self.current_function.unwrap();
+        let func = &mut self.program.functions[func_id.0 as usize];
+        Self::block_mut(func, block_id)
+            .instructions
+            .push((value_id, instr));
+        value_id
+    }
+
+    /// Current value of a variable: a load for slot variables, the SSA value otherwise
+    fn read_var(&mut self, name: &str) -> Option<ValueId> {
+        if let Some(&ptr) = self.slots.get(name) {
+            let block_id = self.current_block.unwrap();
+            return Some(self.push_instruction(
+                block_id,
+                Instruction::Load {
+                    ptr,
+                    effect: MemoryEffect::Read,
+                },
+            ));
+        }
+        self.variable_map.get(name).copied()
+    }
+
+    /// Bind a variable to a new value: a store for slot variables, a map update otherwise
+    fn write_var(&mut self, name: &str, value: ValueId) {
+        if !self.slot_vars.contains(name) {
+            self.variable_map.insert(name.to_string(), value);
+            return;
+        }
+        let ptr = match self.slots.get(name) {
+            Some(&ptr) => ptr,
+            None => {
+                // Slots are allocated in the entry block so that a declaration inside
+                // a loop does not grow the stack on every iteration
+                let func_id = self.current_function.unwrap();
+                let entry = self.program.functions[func_id.0 as usize].entry_block;
+                let size = self.push_instruction(entry, Instruction::ConstInt { value: 1 });
+                let ptr = self.push_instruction(
+                    entry,
+                    Instruction::Alloc {
+                        size,
+                        align: 8,
+                        effect: MemoryEffect::Alloc,
+                    },
+                );
+                self.slots.insert(name.to_string(), ptr);
+                ptr
+            }
+        };
+        let block_id = self.current_block.unwrap();
+        self.push_instruction(
+            block_id,
+            Instruction::Store {
+                ptr,
+                value,
+                effect: MemoryEffect::Write,
+            },
+        );
     }
 
     fn build_statement(&mut self, stmt: &Statement) {
@@ -223,7 +341,7 @@ impl IrBuilder {
             }
             Statement::Let { name, init, .. } => {
                 let value = self.build_expr(init);
-                self.variable_map.insert(name.clone(), value);
+                self.write_var(name, value);
             }
             Statement::Return(expr) => {
                 let value = expr.as_ref().map(|e| self.build_expr(e));
@@ -266,8 +384,8 @@ impl IrBuilder {
 
             Expr::Ident(name) => {
                 // Look up variable in current scope
-                if let Some(&var_id) = self.variable_map.get(name) {
-                    // Return existing value (in SSA, we might need a phi node if reassigned)
+                if let Some(var_id) = self.read_var(name) {
+                    // Existing SSA value, or a fresh load for slot variables
                     return var_id;
                 } else {
                     // TODO: Error - undefined variable
@@ -438,7 +556,8 @@ impl IrBuilder {
                         }
                     }
                 } else if let Expr::Ident(callee_name) = callee.as_ref() {
-                    if is_stdlib_function(callee_name) {
+                    if is_stdlib_function(callee_name) && !self.user_functions.contains(callee_name)
+                    {
                         // Use Intrinsic for stdlib functions
                         // Determine memory effect based on function name
                         let effect = match callee_name.as_str() {
@@ -505,8 +624,8 @@ impl IrBuilder {
                 let rhs_val = self.build_expr(rhs);
                 if let Expr::Ident(name) = lhs.as_ref() {
                     // Simple variable assignment
-                    // Update variable map with new value
-                    self.variable_map.insert(name.clone(), rhs_val);
+                    // Rebind the variable (store for slot variables)
+                    self.write_var(name, rhs_val);
                     // Return the assigned value
                     return rhs_val;
                 } else if let Expr::Member(obj_expr, field_name) = lhs.as_ref() {
@@ -542,10 +661,9 @@ impl IrBuilder {
             Expr::AddAssign(lhs, rhs) => {
                 // Handle +=: x += value -> x = x + value
                 if let Expr::Ident(name) = lhs.as_ref() {
-                    let old_val = self.variable_map.get(name).copied().unwrap_or_else(|| {
-                        // TODO: Error - undefined variable
-                        self.program.new_value_id()
-                    });
+                    let old_val = self
+                        .read_var(name)
+                        .unwrap_or_else(|| self.program.new_value_id());
                     let rhs_val = self.build_expr(rhs);
                     let new_val = self.program.new_value_id();
                     let func_id = self.current_function.unwrap();
@@ -563,7 +681,7 @@ impl IrBuilder {
                             rhs: rhs_val,
                         },
                     ));
-                    self.variable_map.insert(name.clone(), new_val);
+                    self.write_var(name, new_val);
                     return new_val;
                 } else {
                     // TODO: Handle complex lvalues
@@ -575,9 +693,7 @@ impl IrBuilder {
                 // Handle -=: x -= value -> x = x - value
                 if let Expr::Ident(name) = lhs.as_ref() {
                     let old_val = self
-                        .variable_map
-                        .get(name)
-                        .copied()
+                        .read_var(name)
                         .unwrap_or_else(|| self.program.new_value_id());
                     let rhs_val = self.build_expr(rhs);
                     let new_val = self.program.new_value_id();
@@ -596,7 +712,7 @@ impl IrBuilder {
                             rhs: rhs_val,
                         },
                     ));
-                    self.variable_map.insert(name.clone(), new_val);
+                    self.write_var(name, new_val);
                     return new_val;
                 } else {
                     return self.build_expr(rhs);
@@ -607,9 +723,7 @@ impl IrBuilder {
                 // Handle *=: x *= value -> x = x * value
                 if let Expr::Ident(name) = lhs.as_ref() {
                     let old_val = self
-                        .variable_map
-                        .get(name)
-                        .copied()
+                        .read_var(name)
                         .unwrap_or_else(|| self.program.new_value_id());
                     let rhs_val = self.build_expr(rhs);
                     let new_val = self.program.new_value_id();
@@ -628,7 +742,7 @@ impl IrBuilder {
                             rhs: rhs_val,
                         },
                     ));
-                    self.variable_map.insert(name.clone(), new_val);
+                    self.write_var(name, new_val);
                     return new_val;
                 } else {
                     return self.build_expr(rhs);
@@ -639,9 +753,7 @@ impl IrBuilder {
                 // Handle /=: x /= value -> x = x / value
                 if let Expr::Ident(name) = lhs.as_ref() {
                     let old_val = self
-                        .variable_map
-                        .get(name)
-                        .copied()
+                        .read_var(name)
                         .unwrap_or_else(|| self.program.new_value_id());
                     let rhs_val = self.build_expr(rhs);
                     let new_val = self.program.new_value_id();
@@ -660,7 +772,7 @@ impl IrBuilder {
                             rhs: rhs_val,
                         },
                     ));
-                    self.variable_map.insert(name.clone(), new_val);
+                    self.write_var(name, new_val);
                     return new_val;
                 } else {
                     return self.build_expr(rhs);
@@ -898,7 +1010,9 @@ impl IrBuilder {
         for stmt in body {
             self.build_statement(stmt);
         }
-        // Jump back to header (unless there's already a terminator)
+        // Jump back to header (unless there's already a terminator). The body may
+        // have ended in another block than it started in (e.g. after an `if`).
+        let body_block_id = self.current_block.unwrap();
         {
             let func = &mut self.program.functions[func_id.0 as usize];
             let needs_jump = {
