@@ -8,6 +8,7 @@ use serde_json;
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
+use std::sync::Arc;
 
 /// Control flow result
 enum ControlFlow {
@@ -21,8 +22,9 @@ enum ControlFlow {
 #[derive(Default)]
 pub struct Environment {
     variables: HashMap<String, Value>,
-    functions: HashMap<String, Function>,
-    classes: HashMap<String, Class>,
+    // Shared between scopes: a call clones the pointer, not the definitions
+    functions: Arc<HashMap<String, Function>>,
+    classes: Arc<HashMap<String, Class>>,
 }
 
 impl Environment {
@@ -39,16 +41,17 @@ impl Environment {
     }
 
     fn set_var_mut(&mut self, name: &str, value: Value) -> Result<(), &'static str> {
-        if self.variables.contains_key(name) {
-            self.variables.insert(name.to_string(), value);
-            Ok(())
-        } else {
-            Err("Variable not found or not mutable")
+        match self.variables.get_mut(name) {
+            Some(slot) => {
+                *slot = value;
+                Ok(())
+            }
+            None => Err("Variable not found or not mutable"),
         }
     }
 
     pub fn add_function(&mut self, func: Function) {
-        self.functions.insert(func.name.clone(), func);
+        Arc::make_mut(&mut self.functions).insert(func.name.clone(), func);
     }
 
     fn get_function(&self, name: &str) -> Option<&Function> {
@@ -60,7 +63,7 @@ impl Environment {
     }
 
     pub fn add_class(&mut self, class: Class) {
-        self.classes.insert(class.name.clone(), class);
+        Arc::make_mut(&mut self.classes).insert(class.name.clone(), class);
     }
 
     fn get_class(&self, name: &str) -> Option<&Class> {
@@ -120,9 +123,9 @@ impl Interpreter {
         // Create new scope for function
         let mut func_env = Environment::new();
 
-        // Copy functions and classes from parent scope
-        func_env.functions = parent_env.functions.clone();
-        func_env.classes = parent_env.classes.clone();
+        // Share functions and classes with the parent scope
+        func_env.functions = Arc::clone(&parent_env.functions);
+        func_env.classes = Arc::clone(&parent_env.classes);
 
         // Bind parameters
         if args.len() != func.params.len() {
@@ -145,6 +148,22 @@ impl Interpreter {
         }
 
         Ok(result)
+    }
+
+    /// Run a loop body; stops at the first statement that changes control flow
+    /// and hands that flow (return / break / continue) back to the loop
+    fn eval_block(
+        &mut self,
+        body: &[Statement],
+        env: &mut Environment,
+    ) -> Result<ControlFlow, &'static str> {
+        for stmt in body {
+            match self.eval_stmt(stmt, env)? {
+                ControlFlow::Next => {}
+                flow => return Ok(flow),
+            }
+        }
+        Ok(ControlFlow::Next)
     }
 
     /// Evaluate a statement
@@ -216,20 +235,27 @@ impl Interpreter {
                         break;
                     }
 
-                    for stmt in body {
-                        match self.eval_stmt(stmt, env)? {
-                            ControlFlow::Return(v) => return Ok(ControlFlow::Return(v)),
-                            ControlFlow::Break => break,
-                            ControlFlow::Continue => continue,
-                            ControlFlow::Next => {}
-                        }
+                    match self.eval_block(body, env)? {
+                        ControlFlow::Return(v) => return Ok(ControlFlow::Return(v)),
+                        ControlFlow::Break => break,
+                        ControlFlow::Continue | ControlFlow::Next => {}
                     }
                 }
                 Ok(ControlFlow::Next)
             }
             Statement::For { var, iter, body } => {
-                // Evaluate iterator expression
-                let iter_val = self.eval_expr(iter, env)?;
+                // Evaluate iterator expression; range(...) is not a callable function,
+                // it is expanded by the fallback arm below
+                let is_range_call = matches!(
+                    iter,
+                    Expr::Call { callee, .. }
+                        if matches!(callee.as_ref(), Expr::Ident(name) if name == "range")
+                );
+                let iter_val = if is_range_call {
+                    Value::None
+                } else {
+                    self.eval_expr(iter, env)?
+                };
 
                 // Handle different iterator types
                 match iter_val {
@@ -238,13 +264,10 @@ impl Interpreter {
                         // Simple case: for x in N (iterate from 0 to N-1)
                         for i in 0..end {
                             env.set_var(var.clone(), Value::Int(i));
-                            for stmt in body {
-                                match self.eval_stmt(stmt, env)? {
-                                    ControlFlow::Return(v) => return Ok(ControlFlow::Return(v)),
-                                    ControlFlow::Break => break,
-                                    ControlFlow::Continue => continue,
-                                    ControlFlow::Next => {}
-                                }
+                            match self.eval_block(body, env)? {
+                                ControlFlow::Return(v) => return Ok(ControlFlow::Return(v)),
+                                ControlFlow::Break => break,
+                                ControlFlow::Continue | ControlFlow::Next => {}
                             }
                         }
                     }
@@ -252,13 +275,10 @@ impl Interpreter {
                     Value::List(list) | Value::Array(list) => {
                         for item in list {
                             env.set_var(var.clone(), item);
-                            for stmt in body {
-                                match self.eval_stmt(stmt, env)? {
-                                    ControlFlow::Return(v) => return Ok(ControlFlow::Return(v)),
-                                    ControlFlow::Break => break,
-                                    ControlFlow::Continue => continue,
-                                    ControlFlow::Next => {}
-                                }
+                            match self.eval_block(body, env)? {
+                                ControlFlow::Return(v) => return Ok(ControlFlow::Return(v)),
+                                ControlFlow::Break => break,
+                                ControlFlow::Continue | ControlFlow::Next => {}
                             }
                         }
                     }
@@ -299,15 +319,12 @@ impl Interpreter {
                                     // Iterate over range
                                     for i in range_values {
                                         env.set_var(var.clone(), Value::Int(i));
-                                        for stmt in body {
-                                            match self.eval_stmt(stmt, env)? {
-                                                ControlFlow::Return(v) => {
-                                                    return Ok(ControlFlow::Return(v))
-                                                }
-                                                ControlFlow::Break => break,
-                                                ControlFlow::Continue => continue,
-                                                ControlFlow::Next => {}
+                                        match self.eval_block(body, env)? {
+                                            ControlFlow::Return(v) => {
+                                                return Ok(ControlFlow::Return(v))
                                             }
+                                            ControlFlow::Break => break,
+                                            ControlFlow::Continue | ControlFlow::Next => {}
                                         }
                                     }
                                     return Ok(ControlFlow::Next);
@@ -661,11 +678,13 @@ impl Interpreter {
                     // Check if it's a stdlib function
                     if is_stdlib_function(func_name) {
                         self.call_stdlib_function(func_name, &arg_values)
-                    } else if let Some(func) = env.get_function(func_name) {
-                        let func_clone = func.clone();
-                        self.eval_function(&func_clone, &arg_values, env)
                     } else {
-                        Err("Function not found")
+                        // Hold the shared table so the callee is borrowed, not cloned
+                        let functions = Arc::clone(&env.functions);
+                        match functions.get(func_name) {
+                            Some(func) => self.eval_function(func, &arg_values, env),
+                            None => Err("Function not found"),
+                        }
                     }
                 } else {
                     Err("Invalid function call")
@@ -1464,6 +1483,71 @@ mod tests {
         } else {
             panic!("Expected Int value");
         }
+    }
+
+    fn run_main(source: &str) -> Value {
+        let program = parse(source).unwrap();
+        Interpreter::new().unwrap().interpret(&program).unwrap()
+    }
+
+    #[test]
+    fn test_break_leaves_while_loop() {
+        let result = run_main(
+            "fn main() -> int:
+    var i = 0
+    while i < 10:
+        if i == 3:
+            break
+        i = i + 1
+    return i",
+        );
+        assert!(matches!(result, Value::Int(3)));
+    }
+
+    #[test]
+    fn test_continue_skips_rest_of_while_body() {
+        let result = run_main(
+            "fn main() -> int:
+    var i = 0
+    var s = 0
+    while i < 5:
+        i = i + 1
+        if i == 2:
+            continue
+        s = s + i
+    return s",
+        );
+        assert!(matches!(result, Value::Int(13)));
+    }
+
+    #[test]
+    fn test_break_and_continue_in_for_loop() {
+        let result = run_main(
+            "fn main() -> int:
+    var s = 0
+    for i in range(0, 10):
+        if i == 1:
+            continue
+        if i == 4:
+            break
+        s = s + i
+    return s",
+        );
+        assert!(matches!(result, Value::Int(5)));
+    }
+
+    #[test]
+    fn test_recursive_calls_share_function_table() {
+        let result = run_main(
+            "fn fib(n: int) -> int:
+    if n <= 1:
+        return n
+    return fib(n - 1) + fib(n - 2)
+
+fn main() -> int:
+    return fib(15)",
+        );
+        assert!(matches!(result, Value::Int(610)));
     }
 
     #[test]
