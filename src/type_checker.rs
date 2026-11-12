@@ -536,6 +536,12 @@ fn infer_binary_op_type(left: &Type, right: &Type) -> TypeResult<Type> {
 fn types_compatible(actual: &Type, expected: &Type) -> bool {
     match (actual, expected) {
         (Type::Dynamic, _) | (_, Type::Dynamic) => true,
+        // Containers: compare element types recursively, so `[]` (list[dynamic])
+        // is accepted where list[int] is expected
+        (Type::List(a), Type::List(b)) | (Type::Array(a), Type::Array(b)) => types_compatible(a, b),
+        (Type::Map(ak, av), Type::Map(bk, bv)) => {
+            types_compatible(ak, bk) && types_compatible(av, bv)
+        }
         (a, b) => a == b,
     }
 }
@@ -597,6 +603,29 @@ fn main() -> str:
         )
         .unwrap();
         assert!(type_check_program(&call_ret).is_err());
+    }
+
+    #[test]
+    fn test_empty_list_compatible_with_typed_list() {
+        let ret = parse(
+            "fn f() -> list[int]:
+    return []",
+        )
+        .unwrap();
+        assert!(type_check_program(&ret).is_ok());
+        let let_stmt = parse(
+            "fn f() -> int:
+    let xs: list[int] = []
+    return 0",
+        )
+        .unwrap();
+        assert!(type_check_program(&let_stmt).is_ok());
+        let bad = parse(
+            "fn f() -> list[int]:
+    return [\"a\"]",
+        )
+        .unwrap();
+        assert!(type_check_program(&bad).is_err());
     }
 
     #[test]
