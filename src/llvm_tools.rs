@@ -122,8 +122,8 @@ fn link_objects_to_executable(
             }
         }
         "link" => {
-            // Windows MSVC linker
-            cmd.arg("/OUT:").arg(executable_path);
+            // Windows MSVC linker: /OUT and the path are a single argument
+            cmd.arg(msvc_out_arg(executable_path));
             for obj_path in object_paths {
                 if obj_path.exists() {
                     cmd.arg(obj_path);
@@ -154,17 +154,34 @@ fn link_objects_to_executable(
     Ok(())
 }
 
+/// `/OUT:<path>` as one argument, the form MSVC link.exe expects
+fn msvc_out_arg(executable_path: &Path) -> std::ffi::OsString {
+    let mut arg = std::ffi::OsString::from("/OUT:");
+    arg.push(executable_path);
+    arg
+}
+
+/// True if `link` on PATH is the MSVC linker and not another tool with the same name
+fn is_msvc_link() -> bool {
+    Command::new("link")
+        .arg("/?")
+        .output()
+        .map(|out| String::from_utf8_lossy(&out.stdout).contains("Microsoft"))
+        .unwrap_or(false)
+}
+
 /// Detect appropriate linker for the target platform
 fn detect_linker(target_triple: Option<&str>) -> io::Result<String> {
     // Check target triple first
     if let Some(triple) = target_triple {
         if triple.contains("windows") || triple.contains("msvc") {
-            // Try to find link.exe (MSVC) or use clang
-            if Command::new("link").output().is_ok() {
-                return Ok("link".to_string());
-            }
+            // Prefer clang: it locates the MSVC linker and CRT libraries itself.
+            // A bare `link` on PATH may be an unrelated tool (e.g. coreutils `link`)
             if Command::new("clang").output().is_ok() {
                 return Ok("clang".to_string());
+            }
+            if is_msvc_link() {
+                return Ok("link".to_string());
             }
         } else if triple.contains("linux") || triple.contains("darwin") || triple.contains("unix") {
             // Unix-like: prefer clang, fallback to gcc
@@ -180,11 +197,11 @@ fn detect_linker(target_triple: Option<&str>) -> io::Result<String> {
     // Fallback: detect from current platform
     #[cfg(target_os = "windows")]
     {
-        if Command::new("link").output().is_ok() {
-            return Ok("link".to_string());
-        }
         if Command::new("clang").output().is_ok() {
             return Ok("clang".to_string());
+        }
+        if is_msvc_link() {
+            return Ok("link".to_string());
         }
     }
 
@@ -218,8 +235,14 @@ fn compile_stdlib_runtime(object_path: &Path, target_triple: Option<&str>) -> io
         return Ok(());
     }
 
-    let compiler = find_llvm_compiler()?;
-    let mut cmd = Command::new(&compiler);
+    // The runtime is C source: it needs a C compiler, llc only accepts LLVM IR
+    if !check_clang_available() {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            "clang not found: cannot compile stdlib runtime",
+        ));
+    }
+    let mut cmd = Command::new("clang");
 
     cmd.arg("-c");
     cmd.arg("-o").arg(object_path);
@@ -479,5 +502,16 @@ pub fn detect_target_triple() -> String {
     } else {
         // Default fallback for unknown platforms
         "x86_64-unknown-linux-gnu".to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_msvc_out_arg_is_single_argument() {
+        let arg = msvc_out_arg(Path::new("build/app.exe"));
+        assert_eq!(arg, std::ffi::OsString::from("/OUT:build/app.exe"));
     }
 }
