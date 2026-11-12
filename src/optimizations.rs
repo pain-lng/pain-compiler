@@ -14,8 +14,10 @@ impl Optimizer {
         // Run optimization passes in order
         ir = Self::constant_folding(&ir);
         ir = Self::common_subexpression_elimination(&ir);
-        ir = Self::loop_invariant_code_motion(&ir);
-        ir = Self::loop_unrolling(&ir);
+        // loop_invariant_code_motion and loop_unrolling are not run: find_loops()
+        // reports every CFG edge as a back edge (it has no dominator information),
+        // so they moved instructions out of plain if/else branches and produced
+        // invalid IR. LLVM performs both optimizations on the generated code.
         ir = Self::function_inlining(&ir);
         ir = Self::tail_call_optimization(&ir);
         ir = Self::dead_code_elimination(&ir);
@@ -329,12 +331,13 @@ impl Optimizer {
         let mut new_ir = ir.clone();
 
         for func in &mut new_ir.functions {
-            // Map from instruction signature to value ID
-            let mut expr_map: HashMap<String, ValueId> = HashMap::new();
             let mut value_replacements: HashMap<ValueId, ValueId> = HashMap::new();
 
             // First pass: identify common subexpressions
             for block in &func.blocks {
+                // Signature -> value, per block: a value from another block need not
+                // dominate this one
+                let mut expr_map: HashMap<String, ValueId> = HashMap::new();
                 for (value_id, instr) in &block.instructions {
                     // Skip constants and already replaced values
                     if Self::is_immediate_constant(instr)
@@ -343,8 +346,12 @@ impl Optimizer {
                         continue;
                     }
 
-                    // Create signature for this instruction
-                    let signature = Self::instruction_signature(instr, &value_replacements);
+                    // Only pure arithmetic has a signature; calls and memory
+                    // operations are never merged
+                    let Some(signature) = Self::instruction_signature(instr, &value_replacements)
+                    else {
+                        continue;
+                    };
 
                     if let Some(existing_value) = expr_map.get(&signature) {
                         // Found duplicate expression, mark for replacement
@@ -384,8 +391,8 @@ impl Optimizer {
     fn instruction_signature(
         instr: &Instruction,
         value_replacements: &HashMap<ValueId, ValueId>,
-    ) -> String {
-        match instr {
+    ) -> Option<String> {
+        Some(match instr {
             Instruction::Add { lhs, rhs } => {
                 let lhs = Self::resolve_value(*lhs, value_replacements);
                 let rhs = Self::resolve_value(*rhs, value_replacements);
@@ -424,8 +431,8 @@ impl Optimizer {
                 let op = Self::resolve_value(*operand, value_replacements);
                 format!("Neg({})", op.0)
             }
-            _ => format!("{:?}", instr), // Fallback for other instructions
-        }
+            _ => return None,
+        })
     }
 
     /// Resolve a value ID through replacement chain
@@ -708,6 +715,7 @@ impl Optimizer {
     }
 
     /// Loop Invariant Code Motion: move loop-invariant instructions out of loops
+    #[allow(dead_code)] // disabled in optimize(), see the note there
     fn loop_invariant_code_motion(ir: &IrProgram) -> IrProgram {
         let mut new_ir = ir.clone();
 
@@ -796,6 +804,7 @@ impl Optimizer {
     }
 
     /// Loop unrolling: unroll small loops with known iteration counts
+    #[allow(dead_code)] // disabled in optimize(), see the note there
     fn loop_unrolling(ir: &IrProgram) -> IrProgram {
         let mut new_ir = ir.clone();
 
@@ -973,8 +982,9 @@ impl Optimizer {
 
     /// Check if an instruction is loop-invariant (doesn't depend on loop-defined values)
     fn is_loop_invariant(instr: &Instruction, loop_defined_values: &HashSet<ValueId>) -> bool {
-        // Instructions with side effects are never invariant
-        if Self::has_side_effects(instr) {
+        // Instructions with side effects are never invariant; a load depends on
+        // stores inside the loop, which operand analysis does not see
+        if Self::has_side_effects(instr) || matches!(instr, Instruction::Load { .. }) {
             return false;
         }
 
@@ -1124,6 +1134,7 @@ impl Optimizer {
         }
 
         // Inline functions with improved heuristics
+        let mut next_value_id = new_ir.next_value_id;
         for func in &mut new_ir.functions {
             let mut changed = true;
             let mut inline_count = 0; // Limit inlining per function to avoid code bloat
@@ -1155,11 +1166,13 @@ impl Optimizer {
                             {
                                 // Inline the function
                                 if let Some(inlined_code) = Self::inline_function(
+                                    callee_name,
                                     *entry_block_id,
                                     callee_blocks,
                                     callee_params,
                                     args,
                                     *value_id,
+                                    &mut next_value_id,
                                 ) {
                                     new_instructions.extend(inlined_code);
                                     block_changed = true;
@@ -1179,6 +1192,7 @@ impl Optimizer {
                 }
             }
         }
+        new_ir.next_value_id = next_value_id;
 
         new_ir
     }
@@ -1231,86 +1245,94 @@ impl Optimizer {
         complexity
     }
 
-    /// Inline a function call, returning the inlined instructions
+    /// Inline a function call, returning the inlined instructions.
+    ///
+    /// Only callees that can be spliced in exactly are inlined: a single block that
+    /// ends in `return <local value>`, made of constants, arithmetic and calls, and
+    /// not calling itself. Anything else returns `None` and the call is kept.
     fn inline_function(
+        callee_name: &str,
         entry_block_id: BlockId,
         callee_blocks: &[BasicBlock],
         callee_params: &[(String, ValueId, IrType)],
         args: &[ValueId],
         result_value: ValueId,
+        next_value_id: &mut u32,
     ) -> Option<Vec<(ValueId, Instruction)>> {
-        if callee_params.len() != args.len() {
+        if callee_params.len() != args.len() || callee_blocks.len() != 1 {
+            return None;
+        }
+        let entry_block = callee_blocks.iter().find(|b| b.id == entry_block_id)?;
+        let return_value = match &entry_block.terminator {
+            Some(Instruction::Return { value: Some(v) }) => *v,
+            _ => return None,
+        };
+        // The call result must be defined by an instruction of the callee body
+        if !entry_block
+            .instructions
+            .iter()
+            .any(|(vid, _)| *vid == return_value)
+        {
             return None;
         }
 
-        // Create parameter mapping
-        let mut param_map: HashMap<ValueId, ValueId> = HashMap::new();
-        for (i, (_, param_value, _)) in callee_params.iter().enumerate() {
-            param_map.insert(*param_value, args[i]);
+        // Parameters become the call arguments, the returned value becomes the call
+        // result, every other callee value gets a fresh id (a callee may be inlined
+        // several times into the same function)
+        let mut value_map: HashMap<ValueId, ValueId> = HashMap::new();
+        for ((_, param_value, _), arg) in callee_params.iter().zip(args) {
+            value_map.insert(*param_value, *arg);
         }
-
-        // Clone and remap instructions from callee's entry block
-        let entry_block = callee_blocks.iter().find(|b| b.id == entry_block_id)?;
-        let mut inlined_instructions = Vec::new();
-
-        for (value_id, instr) in &entry_block.instructions {
-            let new_value_id = if *value_id == result_value {
+        let mut fresh = *next_value_id;
+        for (value_id, _) in &entry_block.instructions {
+            let new_id = if *value_id == return_value {
                 result_value
             } else {
-                // Use a new value ID for intermediate values
-                ValueId(value_id.0 + 100000) // Offset to avoid conflicts
+                fresh += 1;
+                ValueId(fresh - 1)
             };
-
-            let new_instr = Self::remap_instruction(instr, &param_map);
-            inlined_instructions.push((new_value_id, new_instr));
+            value_map.insert(*value_id, new_id);
         }
 
-        // Handle return value
-        if let Some(Instruction::Return {
-            value: Some(return_value),
-        }) = &entry_block.terminator
-        {
-            // Check if return value is a parameter
-            if param_map.contains_key(return_value) {
-                // If return value is a parameter, just use the argument directly
-                // This will be handled by the caller using the mapped value
-            } else {
-                // Find the instruction that produces the return value
-                if let Some((_, return_instr)) = entry_block
-                    .instructions
-                    .iter()
-                    .find(|(vid, _)| *vid == *return_value)
-                {
-                    let new_instr = Self::remap_instruction(return_instr, &param_map);
-                    inlined_instructions.push((result_value, new_instr));
-                }
-            }
+        let mut inlined_instructions = Vec::new();
+        for (value_id, instr) in &entry_block.instructions {
+            let new_instr = Self::remap_instruction(instr, &value_map, callee_name)?;
+            inlined_instructions.push((value_map[value_id], new_instr));
         }
 
+        *next_value_id = fresh;
         Some(inlined_instructions)
     }
 
-    /// Remap value IDs in an instruction according to parameter mapping
+    /// Remap value IDs in an instruction. Returns `None` for instructions the
+    /// inliner does not know how to copy, and for a call back to `callee_name`.
     fn remap_instruction(
         instr: &Instruction,
-        param_map: &HashMap<ValueId, ValueId>,
-    ) -> Instruction {
-        match instr {
+        value_map: &HashMap<ValueId, ValueId>,
+        callee_name: &str,
+    ) -> Option<Instruction> {
+        let map = |v: &ValueId| *value_map.get(v).unwrap_or(v);
+        Some(match instr {
+            Instruction::ConstInt { .. }
+            | Instruction::ConstFloat { .. }
+            | Instruction::ConstBool { .. }
+            | Instruction::ConstString { .. }
+            | Instruction::ConstUnit => instr.clone(),
             Instruction::Add { lhs, rhs } => Instruction::Add {
-                lhs: *param_map.get(lhs).unwrap_or(lhs),
-                rhs: *param_map.get(rhs).unwrap_or(rhs),
+                lhs: map(lhs),
+                rhs: map(rhs),
             },
             Instruction::Sub { lhs, rhs } => Instruction::Sub {
-                lhs: *param_map.get(lhs).unwrap_or(lhs),
-                rhs: *param_map.get(rhs).unwrap_or(rhs),
+                lhs: map(lhs),
+                rhs: map(rhs),
             },
             Instruction::Mul { lhs, rhs } => Instruction::Mul {
-                lhs: *param_map.get(lhs).unwrap_or(lhs),
-                rhs: *param_map.get(rhs).unwrap_or(rhs),
+                lhs: map(lhs),
+                rhs: map(rhs),
             },
             Instruction::Div { lhs, rhs } => Instruction::Div {
-                lhs: *param_map.get(lhs).unwrap_or(lhs),
-                rhs: *param_map.get(rhs).unwrap_or(rhs),
+                lhs: map(lhs),
+                rhs: map(rhs),
             },
             Instruction::Call {
                 callee,
@@ -1318,18 +1340,20 @@ impl Optimizer {
                 effect,
                 function_name,
                 is_tail_call,
-            } => Instruction::Call {
-                callee: *param_map.get(callee).unwrap_or(callee),
-                args: args
-                    .iter()
-                    .map(|a| *param_map.get(a).unwrap_or(a))
-                    .collect(),
-                effect: *effect,
-                function_name: function_name.clone(),
-                is_tail_call: *is_tail_call,
-            },
-            _ => instr.clone(), // For other instructions, just clone (they don't use parameters)
-        }
+            } => {
+                if function_name.as_deref() == Some(callee_name) {
+                    return None;
+                }
+                Instruction::Call {
+                    callee: map(callee),
+                    args: args.iter().map(map).collect(),
+                    effect: *effect,
+                    function_name: function_name.clone(),
+                    is_tail_call: *is_tail_call,
+                }
+            }
+            _ => return None,
+        })
     }
 }
 
