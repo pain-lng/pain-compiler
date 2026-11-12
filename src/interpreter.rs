@@ -50,6 +50,40 @@ impl Environment {
         }
     }
 
+    /// Field of the current `self` object (inside a method), if there is one
+    fn self_field(&self, name: &str) -> Option<&Value> {
+        match self.variables.get("self") {
+            Some(Value::Object(instance)) => instance.get_field(name),
+            _ => None,
+        }
+    }
+
+    /// Set a field of the object stored in variable `var`
+    fn set_object_field(
+        &mut self,
+        var: &str,
+        field: &str,
+        value: Value,
+    ) -> Result<(), &'static str> {
+        match self.variables.get_mut(var) {
+            Some(Value::Object(instance)) => {
+                instance.set_field(field.to_string(), value);
+                Ok(())
+            }
+            Some(_) => Err("Member assignment only supported for objects"),
+            None => Err("Variable not found or not mutable"),
+        }
+    }
+
+    /// Assign to a name: a variable, or inside a method a field of `self`
+    fn assign(&mut self, name: &str, value: Value) -> Result<(), &'static str> {
+        if self.variables.contains_key(name) || self.self_field(name).is_none() {
+            self.set_var_mut(name, value)
+        } else {
+            self.set_object_field("self", name, value)
+        }
+    }
+
     pub fn add_function(&mut self, func: Function) {
         Arc::make_mut(&mut self.functions).insert(func.name.clone(), func);
     }
@@ -120,8 +154,25 @@ impl Interpreter {
         args: &[Value],
         parent_env: &mut Environment,
     ) -> Result<Value, &'static str> {
+        self.call_function(func, None, args, parent_env)
+            .map(|(result, _)| result)
+    }
+
+    /// Run a function body. For a method `self_value` is bound to `self`; the second
+    /// element of the result is that object after the call, with any field changes.
+    fn call_function(
+        &mut self,
+        func: &Function,
+        self_value: Option<Value>,
+        args: &[Value],
+        parent_env: &mut Environment,
+    ) -> Result<(Value, Option<Value>), &'static str> {
         // Create new scope for function
         let mut func_env = Environment::new();
+        let is_method = self_value.is_some();
+        if let Some(self_value) = self_value {
+            func_env.set_var("self".to_string(), self_value);
+        }
 
         // Share functions and classes with the parent scope
         func_env.functions = Arc::clone(&parent_env.functions);
@@ -137,17 +188,25 @@ impl Interpreter {
         }
 
         // Execute function body
-        let result = Value::None;
+        let mut result = Value::None;
         for stmt in &func.body {
             match self.eval_stmt(stmt, &mut func_env)? {
-                ControlFlow::Return(val) => return Ok(val),
+                ControlFlow::Return(val) => {
+                    result = val;
+                    break;
+                }
                 ControlFlow::Break => return Err("Break outside loop"),
                 ControlFlow::Continue => return Err("Continue outside loop"),
                 ControlFlow::Next => {}
             }
         }
 
-        Ok(result)
+        let self_after = if is_method {
+            func_env.variables.remove("self")
+        } else {
+            None
+        };
+        Ok((result, self_after))
     }
 
     /// Run a loop body; stops at the first statement that changes control flow
@@ -360,7 +419,12 @@ impl Interpreter {
             }
 
             // Variables
-            Expr::Ident(name) => env.get_var(name).cloned().ok_or("Undefined variable"),
+            // A variable, or inside a method a field of `self` used by its bare name
+            Expr::Ident(name) => env
+                .get_var(name)
+                .or_else(|| env.self_field(name))
+                .cloned()
+                .ok_or("Undefined variable"),
 
             // Binary operations
             Expr::Add(lhs, rhs) => {
@@ -561,11 +625,20 @@ impl Interpreter {
             // Assignment
             Expr::Assign(lhs, rhs) => {
                 let rhs_val = self.eval_expr(rhs, env)?;
-                if let Expr::Ident(name) = lhs.as_ref() {
-                    env.set_var_mut(name, rhs_val.clone())?;
-                    Ok(rhs_val)
-                } else {
-                    Err("Invalid left-hand side for assignment")
+                match lhs.as_ref() {
+                    Expr::Ident(name) => {
+                        env.assign(name, rhs_val.clone())?;
+                        Ok(rhs_val)
+                    }
+                    // obj.field = value, where obj is a variable (including `self`)
+                    Expr::Member(obj, field_name) => match obj.as_ref() {
+                        Expr::Ident(var) => {
+                            env.set_object_field(var, field_name, rhs_val.clone())?;
+                            Ok(rhs_val)
+                        }
+                        _ => Err("Field assignment is only supported on a variable"),
+                    },
+                    _ => Err("Invalid left-hand side for assignment"),
                 }
             }
             Expr::AddAssign(lhs, rhs) => {
@@ -686,6 +759,39 @@ impl Interpreter {
                             None => Err("Function not found"),
                         }
                     }
+                } else if let Expr::Member(obj_expr, method_name) = callee_expr {
+                    // Method call: obj.method(args)
+                    let instance = match self.eval_expr(obj_expr, env)? {
+                        Value::Object(instance) => instance,
+                        _ => return Err("Method call only supported for objects"),
+                    };
+                    let arg_values: Vec<Value> = args
+                        .iter()
+                        .map(|arg| self.eval_expr(arg, env))
+                        .collect::<Result<Vec<_>, _>>()?;
+
+                    let classes = Arc::clone(&env.classes);
+                    let method = classes
+                        .get(&instance.class_name)
+                        .ok_or("Class not found")?
+                        .methods
+                        .iter()
+                        .find(|m| m.name == *method_name)
+                        .ok_or("Method not found")?;
+
+                    let (result, self_after) = self.call_function(
+                        method,
+                        Some(Value::Object(instance)),
+                        &arg_values,
+                        env,
+                    )?;
+
+                    // Objects are values: store the receiver back so that field changes
+                    // made by the method are visible to the caller
+                    if let (Expr::Ident(var), Some(self_after)) = (obj_expr.as_ref(), self_after) {
+                        env.assign(var, self_after)?;
+                    }
+                    Ok(result)
                 } else {
                     Err("Invalid function call")
                 }
@@ -1534,6 +1640,45 @@ mod tests {
     return s",
         );
         assert!(matches!(result, Value::Int(5)));
+    }
+
+    #[test]
+    fn test_method_call_mutates_receiver() {
+        let result = run_main(
+            "class Counter:
+    let value: int
+
+    fn increment():
+        self.value = self.value + 1
+
+    fn get() -> int:
+        return self.value
+
+fn main() -> int:
+    let counter = new Counter(0)
+    counter.increment()
+    counter.increment()
+    return counter.get()",
+        );
+        assert!(matches!(result, Value::Int(2)));
+    }
+
+    #[test]
+    fn test_field_assignment_and_method_arguments() {
+        let result = run_main(
+            "class Point:
+    let x: int
+    let y: int
+
+    fn shifted_sum(dx: int) -> int:
+        return x + self.y + dx
+
+fn main() -> int:
+    let p = new Point(10, 20)
+    p.x = 30
+    return p.shifted_sum(5)",
+        );
+        assert!(matches!(result, Value::Int(55)));
     }
 
     #[test]
