@@ -570,8 +570,9 @@ impl IrBuilder {
                             args: arg_vals,
                             effect,
                         }
-                    } else if self.function_map.contains_key(callee_name) {
-                        // User-defined function - store function name for codegen
+                    } else if self.user_functions.contains(callee_name) {
+                        // User-defined function (possibly defined later in the file,
+                        // so not yet in function_map) - store its name for codegen
                         // Use a placeholder ValueId (we'll resolve by name in codegen)
                         let func_ref_val = self.program.new_value_id();
 

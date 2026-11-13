@@ -483,3 +483,10 @@ fn test_execute_calls_in_loop() {
     let source = "fn sq(x: int) -> int:\n    return x * x\n\nfn add3(a: int, b: int, c: int) -> int:\n    return a + b + c\n\nfn main() -> int:\n    var acc = 0\n    var i = 0\n    while i < 10:\n        acc = add3(acc, sq(i), sq(i))\n        i += 1\n    return acc";
     assert_native_output(source, "calls_in_loop", "570");
 }
+
+#[test]
+fn test_execute_call_to_function_defined_later() {
+    // A callee defined below its caller used to compile to a constant 0
+    let source = "fn main() -> int:\n    return twice(20) + one()\n\nfn twice(x: int) -> int:\n    return x * 2\n\nfn one() -> int:\n    return 1";
+    assert_native_output(source, "forward_call", "41");
+}
