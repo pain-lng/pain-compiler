@@ -6,7 +6,8 @@ use pain_compiler::interpreter::Environment;
 use pain_compiler::{
     llvm_tools::{self, PgoMode},
     parse, type_check_program_with_context, CodeGenerator, DocGenerator, ErrorFormatter, Formatter,
-    Interpreter, IrBuilder, Item, MlirCodeGenerator, Optimizer, TypeContext, WarningCollector,
+    Interpreter, IrBuilder, Item, MlirCodeGenerator, Optimizer, ProgramIndex, TypeContext,
+    WarningCollector,
 };
 use rustyline::error::ReadlineError;
 use rustyline::DefaultEditor;
@@ -58,6 +59,22 @@ enum Commands {
         /// Input source file
         #[arg(short, long)]
         input: PathBuf,
+    },
+    /// Answer a structural question about a source file as JSON (for tools and AI agents)
+    Query {
+        /// What to ask: symbols, callers, callees or slice
+        kind: String,
+        /// Function name, or `Class.method` (not needed for `symbols`)
+        symbol: Option<String>,
+        /// Input source file
+        #[arg(short, long)]
+        input: PathBuf,
+        /// Maximum number of call chains returned by `callers`
+        #[arg(long, default_value_t = 20)]
+        max_paths: usize,
+        /// Print the `text` field of `slice` instead of JSON
+        #[arg(long)]
+        text: bool,
     },
     /// Check a Pain source file (parse and type check)
     Check {
@@ -165,6 +182,15 @@ fn main() -> anyhow::Result<()> {
         }
         Commands::Check { input } => {
             check(&input)?;
+        }
+        Commands::Query {
+            kind,
+            symbol,
+            input,
+            max_paths,
+            text,
+        } => {
+            query(&kind, symbol.as_deref(), &input, max_paths, text)?;
         }
         Commands::Format {
             input,
@@ -474,6 +500,36 @@ fn check(input: &PathBuf) -> anyhow::Result<()> {
 
     println!("✓ All checks passed!");
 
+    Ok(())
+}
+
+fn query(
+    kind: &str,
+    symbol: Option<&str>,
+    input: &PathBuf,
+    max_paths: usize,
+    text: bool,
+) -> anyhow::Result<()> {
+    let source = fs::read_to_string(input)?;
+    let program = parse(&source).map_err(|e| anyhow::anyhow!("Parse error: {}", e))?;
+    let index = ProgramIndex::build(&program, &source);
+    let need_symbol = || symbol.ok_or_else(|| anyhow::anyhow!("`query {}` needs a symbol", kind));
+    let result = match kind {
+        "symbols" => Ok(index.query_symbols()),
+        "callers" => index.query_callers(need_symbol()?, max_paths),
+        "callees" => index.query_callees(need_symbol()?),
+        "slice" => index.query_slice(need_symbol()?),
+        other => Err(format!(
+            "unknown query `{}`; expected symbols, callers, callees or slice",
+            other
+        )),
+    }
+    .map_err(|e| anyhow::anyhow!(e))?;
+    if text && kind == "slice" {
+        print!("{}", result["text"].as_str().unwrap_or_default());
+    } else {
+        println!("{}", serde_json::to_string_pretty(&result)?);
+    }
     Ok(())
 }
 

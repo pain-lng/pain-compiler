@@ -25,7 +25,8 @@ source ─ lexer.rs ─ parser/mod.rs ─ ast.rs ─ type_checker.rs ─┬─ i
 | `src/jit.rs`, `src/jit_orc.rs` | JIT, behind the `jit` feature (needs an LLVM 21 development install) |
 | `src/pml*.rs` | PML configuration format: lexer, parser, values |
 | `src/formatter.rs`, `src/doc_generator.rs` | `pain format`, `pain doc` |
-| `src/main.rs` | CLI: `build`, `run`, `check`, `format`, `doc`, `repl`, PGO commands |
+| `src/query.rs` | `pain query`: call graph, callers/callees, code slices as JSON |
+| `src/main.rs` | CLI: `build`, `run`, `check`, `query`, `format`, `doc`, `repl`, PGO commands |
 
 ## Commands
 
@@ -39,6 +40,22 @@ cargo test -p pain-compiler --test full_pipeline_integration   # needs clang + l
 cargo clippy -p pain-compiler --all-targets -- -D warnings
 cargo bench -p pain-compiler                     # criterion benches in benches/
 ```
+
+## Asking the compiler instead of reading the file
+
+```bash
+pain query symbols --input file.pain              # every function/method: signature, lines
+pain query callers NAME --input file.pain         # all call sites + call chains from the roots
+pain query callees NAME --input file.pain         # direct calls and everything reachable
+pain query slice NAME --input file.pain --text    # body + signatures it needs + who calls it
+```
+
+Methods are named `Class.method`. The answer carries `exact`: when it is `true`
+the list is complete, because the language has no function values or dynamic
+dispatch. Anything the graph cannot resolve (receiver of unknown type, call inside
+an f-string) is listed in `notes` and turns `exact` off. Keep that guarantee when
+adding language features: a new way to call code must either be resolved in
+`query.rs` or reported there.
 
 ## Conventions
 
