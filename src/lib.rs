@@ -37,7 +37,7 @@ pub use jit::{JitEngine, JitFunction};
 pub use lexer::Token;
 pub use llvm_tools::{merge_profiles, PgoMode};
 pub use mlir_codegen::MlirCodeGenerator;
-pub use modules::{Module, ModuleError, ModuleGraph};
+pub use modules::{project_root, Module, ModuleError, ModuleGraph};
 pub use optimizations::Optimizer;
 pub use parser::{parse, parse_with_recovery};
 pub use pml_parser::parse_pml;

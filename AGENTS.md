@@ -25,7 +25,8 @@ source ─ lexer.rs ─ parser/mod.rs ─ ast.rs ─ type_checker.rs ─┬─ i
 | `src/jit.rs`, `src/jit_orc.rs` | JIT, behind the `jit` feature (needs an LLVM 21 development install) |
 | `src/pml*.rs` | PML configuration format: lexer, parser, values |
 | `src/formatter.rs`, `src/doc_generator.rs` | `pain format`, `pain doc` |
-| `src/query.rs` | `pain query`: call graph, callers/callees, code slices as JSON |
+| `src/modules.rs` | Multi-file programs: `import`, `pub`, loading the module graph and linking it into one `Program` |
+| `src/query.rs` | `pain query`: call graph, callers/callees, code slices as JSON, across all files of the program |
 | `src/main.rs` | CLI: `build`, `run`, `check`, `query`, `format`, `doc`, `repl`, PGO commands |
 
 ## Commands
@@ -50,12 +51,33 @@ pain query callees NAME --input file.pain         # direct calls and everything 
 pain query slice NAME --input file.pain --text    # body + signatures it needs + who calls it
 ```
 
-Methods are named `Class.method`. The answer carries `exact`: when it is `true`
+Methods are named `Class.method`; symbols of imported modules are `module.name`
+(`combat.strike`, `combat.Unit.rest`), and a short name works when it is unique.
+`callers` also returns `reachable_from`: everything that reaches the function,
+directly or not. The answer carries `exact`: when it is `true`
 the list is complete, because the language has no function values or dynamic
 dispatch. Anything the graph cannot resolve (receiver of unknown type, call inside
 an f-string) is listed in `notes` and turns `exact` off. Keep that guarantee when
 adding language features: a new way to call code must either be resolved in
 `query.rs` or reported there.
+
+## Modules
+
+- A module is a file. `import a.b: x, y` takes the `pub` items `x` and `y` from
+  `a/b.pain`. This is the only import form: no wildcards, no aliases, no
+  `module.name` access. Imports come before any definition.
+- `pub fn` / `pub class` export an item; everything else is private to its file.
+  Methods and fields have no visibility of their own.
+- Module paths are resolved from the project root (`project_root`): the `src`
+  directory of the package (`pain.toml`) the file is in, otherwise the directory
+  of the entry file.
+- The type checker, the interpreter and the backends still see one `Program`:
+  `ModuleGraph::link` renames items of imported modules to `module.name` and
+  rewrites every reference. The entry file keeps plain names (`main`).
+- Module errors (`ModuleError`) are reported before type checking: missing file,
+  unknown or private name, name clash, import cycle, name used without an import.
+- Expressions carry no file. To tell which file a type error is in, the CLI type
+  checks `link_isolated(i)` (bodies of all other modules removed) per module.
 
 ## Conventions
 

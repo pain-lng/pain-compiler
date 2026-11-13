@@ -4,11 +4,15 @@
 // The call graph comes from the AST. Pain has no function values, reflection or
 // dynamic dispatch, so a resolved edge is a fact, not a guess. Whatever cannot be
 // resolved is reported in `notes` and turns `exact` off instead of being dropped.
+//
+// A program may span several files (see modules.rs). Symbols of imported modules
+// are named `module.name`, the same way the linked program names them.
 
 use crate::ast::*;
 use crate::lexer::{tokenize_with_indentation, Token};
+use crate::modules::ModuleGraph;
 use serde_json::{json, Value};
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 /// Kind of a call-like expression, in the order it appears in the source
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -21,9 +25,14 @@ enum CallKind {
 /// A function or method definition
 #[derive(Debug, Clone)]
 pub struct Symbol {
-    /// `name` for functions, `Class.name` for methods
+    /// `name` for functions, `Class.name` for methods; prefixed with `module.` outside the entry file
     pub name: String,
     pub class: Option<String>,
+    /// Dotted module name, empty for the entry file
+    pub module: String,
+    /// Index into the files of the index
+    pub file: usize,
+    pub public: bool,
     pub signature: String,
     pub first_line: usize,
     pub last_line: usize,
@@ -34,6 +43,7 @@ pub struct Symbol {
 pub struct CallSite {
     pub caller: String,
     pub callee: String,
+    pub file: usize,
     /// 0 when the position could not be recovered
     pub line: usize,
     pub column: usize,
@@ -43,14 +53,31 @@ pub struct CallSite {
 
 #[derive(Debug, Clone)]
 struct ClassInfo {
+    file: usize,
     first_line: usize,
     last_line: usize,
     methods: Vec<String>,
 }
 
-/// Call graph and definition ranges of one source file
-pub struct ProgramIndex<'a> {
-    lines: Vec<&'a str>,
+struct SourceFile {
+    /// Path as given to the compiler; empty for a program built from a string
+    path: String,
+    lines: Vec<String>,
+}
+
+/// One file to index: its AST, its text and what its names resolve to
+struct ModuleInput<'a> {
+    name: &'a str,
+    path: String,
+    source: &'a str,
+    program: &'a Program,
+    /// Name visible in the file -> name in the whole program
+    scope: HashMap<String, String>,
+}
+
+/// Call graph and definition ranges of a program
+pub struct ProgramIndex {
+    files: Vec<SourceFile>,
     symbols: BTreeMap<String, Symbol>,
     classes: BTreeMap<String, ClassInfo>,
     calls: Vec<CallSite>,
@@ -68,10 +95,19 @@ struct RawCall {
     certain: bool,
 }
 
+/// Program-wide facts the body walker resolves names against
+struct Globals {
+    functions: HashSet<String>,
+    classes: HashSet<String>,
+    /// Method name -> classes that define it
+    methods: BTreeMap<String, Vec<String>>,
+    /// Function -> class it returns
+    return_classes: HashMap<String, String>,
+}
+
 struct BodyWalker<'p> {
-    functions: &'p BTreeSet<String>,
-    methods: &'p BTreeMap<String, Vec<String>>,
-    return_classes: &'p HashMap<String, String>,
+    globals: &'p Globals,
+    scope: &'p HashMap<String, String>,
     locals: HashMap<String, Option<String>>,
     owner: String,
     calls: Vec<RawCall>,
@@ -79,22 +115,37 @@ struct BodyWalker<'p> {
     notes: Vec<String>,
 }
 
-fn named_class(ty: &Type) -> Option<String> {
+/// Class named by a type, as the program names it
+fn named_class(ty: &Type, scope: &HashMap<String, String>) -> Option<String> {
     match ty {
-        Type::Named(name) => Some(name.clone()),
+        Type::Named(name) => Some(scope.get(name).cloned().unwrap_or_else(|| name.clone())),
         _ => None,
     }
 }
 
 impl BodyWalker<'_> {
+    fn function_named(&self, name: &str) -> Option<&String> {
+        self.scope
+            .get(name)
+            .filter(|target| self.globals.functions.contains(*target))
+    }
+
+    fn class_named(&self, name: &str) -> String {
+        self.scope
+            .get(name)
+            .filter(|target| self.globals.classes.contains(*target))
+            .cloned()
+            .unwrap_or_else(|| name.to_string())
+    }
+
     fn class_of(&self, expr: &Expr) -> Option<String> {
         match expr {
             Expr::Ident(name) => self.locals.get(name).cloned().flatten(),
-            Expr::New { class_name, .. } => Some(class_name.clone()),
+            Expr::New { class_name, .. } => Some(self.class_named(class_name)),
             Expr::Call { callee, .. } => match callee.as_ref() {
-                Expr::Ident(name) if !self.locals.contains_key(name) => {
-                    self.return_classes.get(name).cloned()
-                }
+                Expr::Ident(name) if !self.locals.contains_key(name) => self
+                    .function_named(name)
+                    .and_then(|f| self.globals.return_classes.get(f).cloned()),
                 _ => None,
             },
             _ => None,
@@ -114,7 +165,7 @@ impl BodyWalker<'_> {
                 self.expr(init);
                 let class = ty
                     .as_ref()
-                    .and_then(named_class)
+                    .and_then(|ty| named_class(ty, self.scope))
                     .or_else(|| self.class_of(init));
                 if let Some(class) = &class {
                     self.class_uses.insert(class.clone());
@@ -155,7 +206,7 @@ impl BodyWalker<'_> {
                 }
             }
             Expr::Ident(name) => {
-                if !self.locals.contains_key(name) && self.functions.contains(name) {
+                if !self.locals.contains_key(name) && self.function_named(name).is_some() {
                     self.notes.push(format!(
                         "{}: function `{}` is used as a value, calls through it are not tracked",
                         self.owner, name
@@ -188,7 +239,7 @@ impl BodyWalker<'_> {
             Expr::Not(a) | Expr::Neg(a) | Expr::IsInstance(a, _) => self.expr(a),
             Expr::Member(obj, _) => self.expr(obj),
             Expr::New { class_name, args } => {
-                self.class_uses.insert(class_name.clone());
+                self.class_uses.insert(self.class_named(class_name));
                 self.calls.push(RawCall {
                     kind: CallKind::New,
                     name: class_name.clone(),
@@ -225,10 +276,9 @@ impl BodyWalker<'_> {
                 self.owner, name
             ));
             None
-        } else if self.functions.contains(name) {
-            Some(name.to_string())
         } else {
-            None // builtin / stdlib
+            // Not a function of the program: builtin / stdlib
+            self.function_named(name).cloned()
         };
         self.calls.push(RawCall {
             kind: CallKind::Direct,
@@ -239,7 +289,12 @@ impl BodyWalker<'_> {
     }
 
     fn method_call(&mut self, receiver: &Expr, method: &str) {
-        let owners = self.methods.get(method).cloned().unwrap_or_default();
+        let owners = self
+            .globals
+            .methods
+            .get(method)
+            .cloned()
+            .unwrap_or_default();
         let (callee, certain) = match self.class_of(receiver) {
             Some(class) if owners.contains(&class) => (Some(format!("{}.{}", class, method)), true),
             Some(_) => (None, true),
@@ -269,6 +324,9 @@ impl BodyWalker<'_> {
         });
     }
 }
+
+/// A definition in the AST: (is class, name, owning class, function, public)
+type AstDef<'a> = (bool, String, Option<String>, Option<&'a Function>, bool);
 
 /// A definition header found in the token stream
 struct TokenDef {
@@ -318,9 +376,13 @@ fn scan_tokens(source: &str) -> TokenScan {
         let next_is_paren = matches!(tokens.get(i + 1).map(|t| &t.token), Some(Token::LParen));
         match prev {
             Some(Token::Fn) | Some(Token::Class) => {
-                let header = &tokens[i - 1];
+                // The definition starts at `pub` when there is one
+                let mut header = &tokens[i - 1];
+                if i >= 2 && matches!(tokens[i - 2].token, Token::Pub) {
+                    header = &tokens[i - 2];
+                }
                 scan.defs.push(TokenDef {
-                    is_class: matches!(header.token, Token::Class),
+                    is_class: matches!(tokens[i - 1].token, Token::Class),
                     name: name.clone(),
                     line: header.span.start.line,
                     column: header.span.start.column,
@@ -369,224 +431,307 @@ impl TokenScan {
     }
 }
 
-impl<'a> ProgramIndex<'a> {
-    pub fn build(program: &Program, source: &'a str) -> Self {
-        let scan = scan_tokens(source);
-        let lines: Vec<&str> = source.lines().collect();
-        let mut notes = Vec::new();
-
-        // Definitions in source order: the token stream and the AST must agree
-        let mut ast_defs: Vec<(bool, String, Option<&str>, Option<&Function>)> = Vec::new();
-        for item in &program.items {
-            match item {
-                Item::Function(func) => ast_defs.push((false, func.name.clone(), None, Some(func))),
-                Item::Class(class) => {
-                    ast_defs.push((true, class.name.clone(), None, None));
-                    for method in &class.methods {
-                        ast_defs.push((
-                            false,
-                            method.name.clone(),
-                            Some(&class.name),
-                            Some(method),
-                        ));
-                    }
-                }
-            }
-        }
-        let positions_ok = ast_defs.len() == scan.defs.len()
-            && ast_defs
-                .iter()
-                .zip(&scan.defs)
-                .all(|(a, t)| a.0 == t.is_class && a.1 == t.name);
-        if !positions_ok {
-            notes.push("definitions could not be matched to source lines".to_string());
-        }
-
-        let functions: BTreeSet<String> = program
+impl ProgramIndex {
+    /// Index a single-file program
+    pub fn build(program: &Program, source: &str) -> Self {
+        let scope = program
             .items
             .iter()
-            .filter_map(|item| match item {
-                Item::Function(f) => Some(f.name.clone()),
-                Item::Class(_) => None,
+            .map(|item| match item {
+                Item::Function(f) => (f.name.clone(), f.name.clone()),
+                Item::Class(c) => (c.name.clone(), c.name.clone()),
             })
             .collect();
-        let mut methods: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        Self::build_from(&[ModuleInput {
+            name: "",
+            path: String::new(),
+            source,
+            program,
+            scope,
+        }])
+    }
+
+    /// Index every file of a multi-module program
+    pub fn from_graph(graph: &ModuleGraph) -> Self {
+        let inputs: Vec<ModuleInput> = graph
+            .modules()
+            .iter()
+            .map(|module| ModuleInput {
+                name: &module.name,
+                path: module.path.display().to_string().replace('\\', "/"),
+                source: &module.source,
+                program: &module.program,
+                scope: graph.scope(module),
+            })
+            .collect();
+        Self::build_from(&inputs)
+    }
+
+    fn build_from(inputs: &[ModuleInput]) -> Self {
+        let mut notes = Vec::new();
+
+        // Program-wide tables first: a call may target any file
+        let mut globals = Globals {
+            functions: HashSet::new(),
+            classes: HashSet::new(),
+            methods: BTreeMap::new(),
+            return_classes: HashMap::new(),
+        };
         let mut class_fields: HashMap<String, Vec<(String, Option<String>)>> = HashMap::new();
-        let mut return_classes = HashMap::new();
-        for item in &program.items {
-            match item {
-                Item::Function(f) => {
-                    if let Some(class) = f.return_type.as_ref().and_then(named_class) {
-                        return_classes.insert(f.name.clone(), class);
+        for input in inputs {
+            let qualify = |name: &str| {
+                input
+                    .scope
+                    .get(name)
+                    .cloned()
+                    .unwrap_or_else(|| name.to_string())
+            };
+            for item in &input.program.items {
+                match item {
+                    Item::Function(f) => {
+                        let name = qualify(&f.name);
+                        if let Some(class) = f
+                            .return_type
+                            .as_ref()
+                            .and_then(|ty| named_class(ty, &input.scope))
+                        {
+                            globals.return_classes.insert(name.clone(), class);
+                        }
+                        globals.functions.insert(name);
                     }
-                }
-                Item::Class(class) => {
-                    for method in &class.methods {
-                        methods
-                            .entry(method.name.clone())
-                            .or_default()
-                            .push(class.name.clone());
+                    Item::Class(class) => {
+                        let name = qualify(&class.name);
+                        for method in &class.methods {
+                            globals
+                                .methods
+                                .entry(method.name.clone())
+                                .or_default()
+                                .push(name.clone());
+                        }
+                        class_fields.insert(
+                            name.clone(),
+                            class
+                                .fields
+                                .iter()
+                                .map(|f| (f.name.clone(), named_class(&f.ty, &input.scope)))
+                                .collect(),
+                        );
+                        globals.classes.insert(name);
                     }
-                    class_fields.insert(
-                        class.name.clone(),
-                        class
-                            .fields
-                            .iter()
-                            .map(|f| (f.name.clone(), named_class(&f.ty)))
-                            .collect(),
-                    );
                 }
             }
         }
 
+        let mut files = Vec::new();
         let mut symbols = BTreeMap::new();
         let mut classes = BTreeMap::new();
         let mut calls = Vec::new();
         let mut class_uses = BTreeMap::new();
 
-        for (i, (is_class, name, class, func)) in ast_defs.iter().enumerate() {
-            let (first_line, last_line, tok_range) = if positions_ok {
-                let def = &scan.defs[i];
-                let last = scan.last_line(def.line, def.column);
-                // Tokens of this body: up to the next definition header
-                let end = scan.defs.get(i + 1).map(|d| d.index).unwrap_or(usize::MAX);
-                (def.line, last, Some((def.index, end)))
-            } else {
-                (0, 0, None)
+        for (file, input) in inputs.iter().enumerate() {
+            let scan = scan_tokens(input.source);
+            let lines: Vec<String> = input.source.lines().map(str::to_string).collect();
+            let qualify = |name: &str| {
+                input
+                    .scope
+                    .get(name)
+                    .cloned()
+                    .unwrap_or_else(|| name.to_string())
             };
-            if *is_class {
-                classes.insert(
-                    name.clone(),
-                    ClassInfo {
-                        first_line,
-                        last_line,
-                        methods: Vec::new(),
-                    },
-                );
-                continue;
-            }
-            let func = func.expect("function definition");
-            let full_name = match class {
-                Some(class) => format!("{}.{}", class, name),
-                None => name.clone(),
-            };
-            if let Some(class) = class {
-                if let Some(info) = classes.get_mut(*class) {
-                    info.methods.push(full_name.clone());
-                }
-            }
 
-            let mut walker = BodyWalker {
-                functions: &functions,
-                methods: &methods,
-                return_classes: &return_classes,
-                locals: HashMap::new(),
-                owner: full_name.clone(),
-                calls: Vec::new(),
-                class_uses: BTreeSet::new(),
-                notes: Vec::new(),
-            };
-            if let Some(class) = class {
-                // Fields are visible by bare name inside methods
-                for (field, field_class) in class_fields.get(*class).into_iter().flatten() {
-                    walker.locals.insert(field.clone(), field_class.clone());
+            // Definitions in source order: the token stream and the AST must agree
+            let mut ast_defs: Vec<AstDef> = Vec::new();
+            for item in &input.program.items {
+                match item {
+                    Item::Function(func) => {
+                        ast_defs.push((false, func.name.clone(), None, Some(func), func.public))
+                    }
+                    Item::Class(class) => {
+                        ast_defs.push((true, class.name.clone(), None, None, class.public));
+                        for method in &class.methods {
+                            ast_defs.push((
+                                false,
+                                method.name.clone(),
+                                Some(qualify(&class.name)),
+                                Some(method),
+                                class.public,
+                            ));
+                        }
+                    }
                 }
-                walker
-                    .locals
-                    .insert("self".to_string(), Some(class.to_string()));
             }
-            for param in &func.params {
-                let param_class = named_class(&param.ty);
-                if let Some(c) = &param_class {
-                    walker.class_uses.insert(c.clone());
-                }
-                walker.locals.insert(param.name.clone(), param_class);
-            }
-            if let Some(c) = func.return_type.as_ref().and_then(named_class) {
-                walker.class_uses.insert(c);
-            }
-            walker.block(&func.body);
-
-            // Attach positions: calls in the AST and in the tokens come in the same order
-            let located: Vec<&TokenCall> = match tok_range {
-                Some((start, end)) => scan
-                    .calls
+            let positions_ok = ast_defs.len() == scan.defs.len()
+                && ast_defs
                     .iter()
-                    .filter(|c| c.index > start && c.index < end)
-                    .collect(),
-                None => Vec::new(),
-            };
-            let visible: Vec<&RawCall> =
-                walker.calls.iter().filter(|c| !c.name.is_empty()).collect();
-            let aligned = visible.len() == located.len()
-                && visible
-                    .iter()
-                    .zip(&located)
-                    .all(|(a, t)| a.kind == t.kind && a.name == t.name);
-            if !aligned && positions_ok && !visible.is_empty() {
-                walker
-                    .notes
-                    .push(format!("{}: call positions unavailable", full_name));
-            }
-            let mut next_located = 0;
-            let mut last_pos = (0, 0);
-            for raw in &walker.calls {
-                if !raw.name.is_empty() {
-                    last_pos = if aligned {
-                        let t = located[next_located];
-                        (t.line, t.column)
+                    .zip(&scan.defs)
+                    .all(|(a, t)| a.0 == t.is_class && a.1 == t.name);
+            if !positions_ok {
+                notes.push(format!(
+                    "{}definitions could not be matched to source lines",
+                    if input.path.is_empty() {
+                        String::new()
                     } else {
-                        (0, 0)
-                    };
-                    next_located += 1;
+                        format!("{}: ", input.path)
+                    }
+                ));
+            }
+
+            for (i, (is_class, name, class, func, public)) in ast_defs.iter().enumerate() {
+                let (first_line, last_line, tok_range) = if positions_ok {
+                    let def = &scan.defs[i];
+                    let last = scan.last_line(def.line, def.column);
+                    // Tokens of this body: up to the next definition header
+                    let end = scan.defs.get(i + 1).map(|d| d.index).unwrap_or(usize::MAX);
+                    (def.line, last, Some((def.index, end)))
+                } else {
+                    (0, 0, None)
+                };
+                if *is_class {
+                    classes.insert(
+                        qualify(name),
+                        ClassInfo {
+                            file,
+                            first_line,
+                            last_line,
+                            methods: Vec::new(),
+                        },
+                    );
+                    continue;
                 }
-                if let Some(callee) = &raw.callee {
-                    let pos = if raw.name.is_empty() {
-                        // Extra candidate of an ambiguous method call: emitted just
-                        // before the call it belongs to, so its position comes next
-                        if aligned {
-                            located
-                                .get(next_located)
-                                .map(|t| (t.line, t.column))
-                                .unwrap_or((0, 0))
+                let func = func.expect("function definition");
+                let full_name = match class {
+                    Some(class) => format!("{}.{}", class, name),
+                    None => qualify(name),
+                };
+                if let Some(class) = class {
+                    if let Some(info) = classes.get_mut(class) {
+                        info.methods.push(full_name.clone());
+                    }
+                }
+
+                let mut walker = BodyWalker {
+                    globals: &globals,
+                    scope: &input.scope,
+                    locals: HashMap::new(),
+                    owner: full_name.clone(),
+                    calls: Vec::new(),
+                    class_uses: BTreeSet::new(),
+                    notes: Vec::new(),
+                };
+                if let Some(class) = class {
+                    // Fields are visible by bare name inside methods
+                    for (field, field_class) in class_fields.get(class).into_iter().flatten() {
+                        walker.locals.insert(field.clone(), field_class.clone());
+                    }
+                    walker
+                        .locals
+                        .insert("self".to_string(), Some(class.clone()));
+                }
+                for param in &func.params {
+                    let param_class = named_class(&param.ty, &input.scope);
+                    if let Some(c) = &param_class {
+                        walker.class_uses.insert(c.clone());
+                    }
+                    walker.locals.insert(param.name.clone(), param_class);
+                }
+                if let Some(c) = func
+                    .return_type
+                    .as_ref()
+                    .and_then(|ty| named_class(ty, &input.scope))
+                {
+                    walker.class_uses.insert(c);
+                }
+                walker.block(&func.body);
+
+                // Attach positions: calls in the AST and in the tokens come in the same order
+                let located: Vec<&TokenCall> = match tok_range {
+                    Some((start, end)) => scan
+                        .calls
+                        .iter()
+                        .filter(|c| c.index > start && c.index < end)
+                        .collect(),
+                    None => Vec::new(),
+                };
+                let visible: Vec<&RawCall> =
+                    walker.calls.iter().filter(|c| !c.name.is_empty()).collect();
+                let aligned = visible.len() == located.len()
+                    && visible
+                        .iter()
+                        .zip(&located)
+                        .all(|(a, t)| a.kind == t.kind && a.name == t.name);
+                if !aligned && positions_ok && !visible.is_empty() {
+                    walker
+                        .notes
+                        .push(format!("{}: call positions unavailable", full_name));
+                }
+                let mut next_located = 0;
+                let mut last_pos = (0, 0);
+                for raw in &walker.calls {
+                    if !raw.name.is_empty() {
+                        last_pos = if aligned {
+                            let t = located[next_located];
+                            (t.line, t.column)
                         } else {
                             (0, 0)
-                        }
-                    } else {
-                        last_pos
-                    };
-                    calls.push(CallSite {
-                        caller: full_name.clone(),
-                        callee: callee.clone(),
-                        line: pos.0,
-                        column: pos.1,
-                        certain: raw.certain,
-                    });
+                        };
+                        next_located += 1;
+                    }
+                    if let Some(callee) = &raw.callee {
+                        let pos = if raw.name.is_empty() {
+                            // Extra candidate of an ambiguous method call: emitted just
+                            // before the call it belongs to, so its position comes next
+                            if aligned {
+                                located
+                                    .get(next_located)
+                                    .map(|t| (t.line, t.column))
+                                    .unwrap_or((0, 0))
+                            } else {
+                                (0, 0)
+                            }
+                        } else {
+                            last_pos
+                        };
+                        calls.push(CallSite {
+                            caller: full_name.clone(),
+                            callee: callee.clone(),
+                            file,
+                            line: pos.0,
+                            column: pos.1,
+                            certain: raw.certain,
+                        });
+                    }
                 }
-            }
 
-            let signature = lines
-                .get(first_line.wrapping_sub(1))
-                .map(|l| l.trim().trim_end_matches(':').to_string())
-                .unwrap_or_else(|| format!("fn {}", name));
-            class_uses.insert(full_name.clone(), walker.class_uses);
-            notes.extend(walker.notes);
-            symbols.insert(
-                full_name.clone(),
-                Symbol {
-                    name: full_name,
-                    class: class.map(|c| c.to_string()),
-                    signature,
-                    first_line,
-                    last_line,
-                },
-            );
+                let signature = lines
+                    .get(first_line.wrapping_sub(1))
+                    .map(|l| l.trim().trim_end_matches(':').to_string())
+                    .unwrap_or_else(|| format!("fn {}", name));
+                class_uses.insert(full_name.clone(), walker.class_uses);
+                notes.extend(walker.notes);
+                symbols.insert(
+                    full_name.clone(),
+                    Symbol {
+                        name: full_name,
+                        class: class.clone(),
+                        module: input.name.to_string(),
+                        file,
+                        public: *public,
+                        signature,
+                        first_line,
+                        last_line,
+                    },
+                );
+            }
+            files.push(SourceFile {
+                path: input.path.clone(),
+                lines,
+            });
         }
 
         notes.sort();
         notes.dedup();
         Self {
-            lines,
+            files,
             symbols,
             classes,
             calls,
@@ -607,7 +752,7 @@ impl<'a> ProgramIndex<'a> {
         &self.notes
     }
 
-    /// Resolve a user-supplied name: exact, or a method given without its class
+    /// Resolve a user-supplied name: exact, or given without its module / class
     fn resolve(&self, name: &str) -> Result<&Symbol, String> {
         if let Some(symbol) = self.symbols.get(name) {
             return Ok(symbol);
@@ -636,38 +781,61 @@ impl<'a> ProgramIndex<'a> {
         }
     }
 
-    fn code_at(&self, line: usize) -> &str {
+    fn path_of(&self, file: usize) -> &str {
+        &self.files[file].path
+    }
+
+    fn code_at(&self, file: usize, line: usize) -> &str {
         line.checked_sub(1)
-            .and_then(|i| self.lines.get(i))
+            .and_then(|i| self.files[file].lines.get(i))
             .map(|l| l.trim())
             .unwrap_or("")
     }
 
-    fn source_of(&self, first_line: usize, last_line: usize) -> String {
+    fn source_of(&self, file: usize, first_line: usize, last_line: usize) -> String {
         if first_line == 0 {
             return String::new();
         }
-        self.lines[first_line - 1..last_line.min(self.lines.len())].join("\n")
+        let lines = &self.files[file].lines;
+        lines[first_line - 1..last_line.min(lines.len())].join("\n")
+    }
+
+    /// `path:` prefix for text output; nothing for a program without file names
+    fn file_prefix(&self, file: usize) -> String {
+        match self.path_of(file) {
+            "" => String::new(),
+            path => format!("{}:", path),
+        }
     }
 
     fn symbol_json(&self, symbol: &Symbol) -> Value {
-        json!({
+        let mut out = json!({
             "name": symbol.name,
             "kind": if symbol.class.is_some() { "method" } else { "function" },
             "signature": symbol.signature,
             "lines": [symbol.first_line, symbol.last_line],
-        })
+        });
+        if !self.path_of(symbol.file).is_empty() {
+            out["file"] = json!(self.path_of(symbol.file));
+            out["module"] = json!(symbol.module);
+            out["public"] = json!(symbol.public);
+        }
+        out
     }
 
     fn site_json(&self, site: &CallSite) -> Value {
-        json!({
+        let mut out = json!({
             "caller": site.caller,
             "callee": site.callee,
             "line": site.line,
             "column": site.column,
-            "code": self.code_at(site.line),
+            "code": self.code_at(site.file, site.line),
             "certain": site.certain,
-        })
+        });
+        if !self.path_of(site.file).is_empty() {
+            out["file"] = json!(self.path_of(site.file));
+        }
+        out
     }
 
     fn envelope(&self, query: &str, target: Option<&Symbol>) -> serde_json::Map<String, Value> {
@@ -676,7 +844,7 @@ impl<'a> ProgramIndex<'a> {
         if let Some(target) = target {
             out.insert("target".into(), self.symbol_json(target));
         }
-        // Exact = nothing in the file escapes the graph
+        // Exact = nothing in the program escapes the graph
         out.insert("exact".into(), json!(self.notes.is_empty()));
         out.insert("notes".into(), json!(self.notes));
         out
@@ -696,7 +864,7 @@ impl<'a> ProgramIndex<'a> {
             .collect()
     }
 
-    /// All symbols in the file with signatures and line ranges
+    /// All symbols of the program with signatures and line ranges
     pub fn query_symbols(&self) -> Value {
         let mut out = self.envelope("symbols", None);
         out.insert(
@@ -709,11 +877,15 @@ impl<'a> ProgramIndex<'a> {
                 self.classes
                     .iter()
                     .map(|(name, info)| {
-                        json!({
+                        let mut class = json!({
                             "name": name,
                             "lines": [info.first_line, info.last_line],
                             "methods": info.methods,
-                        })
+                        });
+                        if !self.path_of(info.file).is_empty() {
+                            class["file"] = json!(self.path_of(info.file));
+                        }
+                        class
                     })
                     .collect(),
             ),
@@ -721,7 +893,8 @@ impl<'a> ProgramIndex<'a> {
         Value::Object(out)
     }
 
-    /// Every call site of `name`, and the call chains that reach it from the roots
+    /// Every call site of `name`, the call chains that reach it from the roots,
+    /// and everything it can be reached from.
     pub fn query_callers(&self, name: &str, max_paths: usize) -> Result<Value, String> {
         let target = self.resolve(name)?;
         let sites: Vec<&CallSite> = self
@@ -730,6 +903,17 @@ impl<'a> ProgramIndex<'a> {
             .filter(|c| c.callee == target.name)
             .collect();
         let callers: BTreeSet<&str> = sites.iter().map(|c| c.caller.as_str()).collect();
+
+        // Everything that reaches the target, directly or through other calls
+        let mut reachable_from: BTreeSet<&str> = BTreeSet::new();
+        let mut queue = vec![target.name.as_str()];
+        while let Some(current) = queue.pop() {
+            for call in self.calls.iter().filter(|c| c.callee == current) {
+                if call.caller != target.name && reachable_from.insert(call.caller.as_str()) {
+                    queue.push(call.caller.as_str());
+                }
+            }
+        }
 
         // Walk the graph backwards from the target to the roots
         let roots = self.roots();
@@ -769,6 +953,7 @@ impl<'a> ProgramIndex<'a> {
             Value::Array(sites.iter().map(|s| self.site_json(s)).collect()),
         );
         out.insert("callers".into(), json!(callers));
+        out.insert("reachable_from".into(), json!(reachable_from));
         out.insert("paths".into(), json!(paths));
         out.insert("paths_truncated".into(), json!(truncated));
         Ok(Value::Object(out))
@@ -825,19 +1010,32 @@ impl<'a> ProgramIndex<'a> {
             .iter()
             .filter(|c| c.callee == target.name && c.caller != target.name)
             .collect();
-        let source = self.source_of(target.first_line, target.last_line);
+        let source = self.source_of(target.file, target.first_line, target.last_line);
 
         let mut text = format!(
-            "# {} (lines {}-{})\n{}\n",
-            target.name, target.first_line, target.last_line, source
+            "# {} ({}lines {}-{})\n{}\n",
+            target.name,
+            match self.path_of(target.file) {
+                "" => String::new(),
+                path => format!("{}, ", path),
+            },
+            target.first_line,
+            target.last_line,
+            source
         );
         if !callees.is_empty() {
             text.push_str("\n# calls\n");
             for callee in &callees {
                 let s = &self.symbols[*callee];
                 text.push_str(&format!(
-                    "{}  # {}, line {}\n",
-                    s.signature, s.name, s.first_line
+                    "{}  # {}, {}line {}\n",
+                    s.signature,
+                    s.name,
+                    match self.path_of(s.file) {
+                        "" => String::new(),
+                        path => format!("{}, ", path),
+                    },
+                    s.first_line
                 ));
             }
         }
@@ -854,7 +1052,7 @@ impl<'a> ProgramIndex<'a> {
                 .map(|s| s.first_line.saturating_sub(1))
                 .min()
                 .unwrap_or(info.last_line);
-            let header = self.source_of(info.first_line, fields_end);
+            let header = self.source_of(info.file, info.first_line, fields_end);
             let header = header.trim_end();
             let signatures: Vec<&str> = info
                 .methods
@@ -863,8 +1061,14 @@ impl<'a> ProgramIndex<'a> {
                 .map(|s| s.signature.as_str())
                 .collect();
             text.push_str(&format!(
-                "\n# class {} (line {})\n{}\n",
-                class, info.first_line, header
+                "\n# class {} ({}line {})\n{}\n",
+                class,
+                match self.path_of(info.file) {
+                    "" => String::new(),
+                    path => format!("{}, ", path),
+                },
+                info.first_line,
+                header
             ));
             for signature in &signatures {
                 text.push_str(&format!("    {}\n", signature));
@@ -880,10 +1084,11 @@ impl<'a> ProgramIndex<'a> {
             text.push_str("\n# called from\n");
             for site in &sites {
                 text.push_str(&format!(
-                    "{}:{}: {}\n",
+                    "{}:{}{}: {}\n",
                     site.caller,
+                    self.file_prefix(site.file),
                     site.line,
-                    self.code_at(site.line)
+                    self.code_at(site.file, site.line)
                 ));
             }
         }
@@ -1121,6 +1326,150 @@ fn main() -> int:
             let err = index.query_callers("nope", 20).unwrap_err();
             assert!(err.contains("unknown symbol `nope`"));
             assert!(err.contains("sum_squares"));
+        });
+    }
+
+    fn with_graph<T>(files: &[(&str, &str)], f: impl FnOnce(&ProgramIndex) -> T) -> T {
+        use std::path::PathBuf;
+        let files: HashMap<PathBuf, String> = files
+            .iter()
+            .map(|(path, source)| (PathBuf::from("proj").join(path), source.to_string()))
+            .collect();
+        let graph = ModuleGraph::load_with(&PathBuf::from("proj").join("main.pain"), &|path| {
+            files
+                .get(path)
+                .cloned()
+                .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "no such file"))
+        })
+        .expect("modules load");
+        f(&ProgramIndex::from_graph(&graph))
+    }
+
+    const MODULES: &[(&str, &str)] = &[
+        (
+            "main.pain",
+            "import combat: strike, Unit
+import ai.target: pick
+
+fn main() -> int:
+    var knight = new Unit(40, 9)
+    knight.rest(1)
+    return strike(knight, pick(3))
+",
+        ),
+        (
+            "combat.pain",
+            "pub class Unit:
+    let hp: int
+    let attack: int
+
+    fn rest(turns: int) -> int:
+        return hp + turns
+
+pub fn strike(attacker: Unit, seed: int) -> int:
+    return clamp(attacker.attack + seed)
+
+fn clamp(value: int) -> int:
+    return value % 100
+",
+        ),
+        (
+            "ai/target.pain",
+            "import combat: strike, Unit
+
+pub fn pick(seed: int) -> int:
+    return strike(new Unit(1, 2), seed) + clamp(seed)
+
+fn clamp(seed: int) -> int:
+    return seed
+",
+        ),
+    ];
+
+    #[test]
+    fn test_callers_across_modules() {
+        with_graph(MODULES, |index| {
+            let result = index.query_callers("combat.strike", 20).unwrap();
+            assert_eq!(result["exact"], json!(true));
+            let sites: Vec<(String, String, u64)> = result["call_sites"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|s| {
+                    (
+                        s["caller"].as_str().unwrap().to_string(),
+                        s["file"].as_str().unwrap().to_string(),
+                        s["line"].as_u64().unwrap(),
+                    )
+                })
+                .collect();
+            assert_eq!(
+                sites,
+                vec![
+                    ("main".to_string(), "proj/main.pain".to_string(), 7),
+                    (
+                        "ai.target.pick".to_string(),
+                        "proj/ai/target.pain".to_string(),
+                        4
+                    ),
+                ]
+            );
+            assert_eq!(result["target"]["file"], json!("proj/combat.pain"));
+            assert_eq!(result["target"]["public"], json!(true));
+            assert_eq!(result["reachable_from"], json!(["ai.target.pick", "main"]));
+        });
+    }
+
+    #[test]
+    fn test_private_functions_with_one_name_stay_apart() {
+        with_graph(MODULES, |index| {
+            // Each module has its own private `clamp`
+            let combat = index.query_callers("combat.clamp", 20).unwrap();
+            assert_eq!(combat["callers"], json!(["combat.strike"]));
+            let ai = index.query_callers("ai.target.clamp", 20).unwrap();
+            assert_eq!(ai["callers"], json!(["ai.target.pick"]));
+            assert!(index
+                .query_callers("clamp", 20)
+                .unwrap_err()
+                .contains("ambiguous"));
+            // The short name works when it is unique
+            assert_eq!(
+                index.query_callers("pick", 20).unwrap()["target"]["name"],
+                json!("ai.target.pick")
+            );
+        });
+    }
+
+    #[test]
+    fn test_method_of_imported_class_and_slice_across_files() {
+        with_graph(MODULES, |index| {
+            let rest = index.query_callers("combat.Unit.rest", 20).unwrap();
+            assert_eq!(rest["call_sites"][0]["caller"], json!("main"));
+            assert_eq!(rest["call_sites"][0]["line"], json!(6));
+            let text = index.query_slice("main").unwrap()["text"]
+                .as_str()
+                .unwrap()
+                .to_string();
+            assert!(text.starts_with("# main (proj/main.pain, lines 4-7)\nfn main() -> int:"));
+            assert!(text.contains(
+                "pub fn strike(attacker: Unit, seed: int) -> int  # combat.strike, proj/combat.pain, line 8"
+            ));
+            assert!(
+                text.contains("# class combat.Unit (proj/combat.pain, line 1)\npub class Unit:")
+            );
+            // Bodies from other files stay out of the slice
+            assert!(!text.contains("return clamp("));
+        });
+    }
+
+    #[test]
+    fn test_reachable_from_lists_transitive_callers() {
+        with_index(PROGRAM, |index| {
+            let result = index.query_callers("square", 20).unwrap();
+            assert_eq!(
+                result["reachable_from"],
+                json!(["main", "report", "sum_squares"])
+            );
         });
     }
 }

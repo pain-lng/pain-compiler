@@ -64,6 +64,28 @@ impl fmt::Display for ModuleError {
 
 impl std::error::Error for ModuleError {}
 
+/// Directory that `import a.b` is resolved from for the given file.
+///
+/// Inside a package (a directory with `pain.toml` somewhere above the file) it is
+/// the package's `src` directory when the file is in it, otherwise the package
+/// directory. Without a package it is the directory of the file itself.
+pub fn project_root(file: &Path) -> PathBuf {
+    let dir = file.parent().map(Path::to_path_buf).unwrap_or_default();
+    let mut current = Some(dir.as_path());
+    while let Some(candidate) = current {
+        if candidate.join("pain.toml").is_file() {
+            let src = candidate.join("src");
+            return if dir.starts_with(&src) {
+                src
+            } else {
+                candidate.to_path_buf()
+            };
+        }
+        current = candidate.parent();
+    }
+    dir
+}
+
 /// All modules reachable from an entry file; the entry is `modules()[0]`
 #[derive(Debug, Clone)]
 pub struct ModuleGraph {
@@ -167,15 +189,28 @@ impl Loader<'_> {
 impl ModuleGraph {
     /// Load the entry file and everything it imports from disk
     pub fn load(entry: &Path) -> Result<Self, ModuleError> {
-        Self::load_with(entry, &|path| std::fs::read_to_string(path))
+        Self::load_in(&project_root(entry), entry, &|path| {
+            std::fs::read_to_string(path)
+        })
     }
 
-    /// Load through a custom reader (in-memory sources in tests and editors)
+    /// Load through a custom reader (in-memory sources in tests and editors);
+    /// modules are looked up next to the entry file
     pub fn load_with(
         entry: &Path,
         read: &dyn Fn(&Path) -> std::io::Result<String>,
     ) -> Result<Self, ModuleError> {
         let root = entry.parent().map(Path::to_path_buf).unwrap_or_default();
+        Self::load_in(&root, entry, read)
+    }
+
+    /// Load with an explicit directory that module paths are resolved from
+    pub fn load_in(
+        root: &Path,
+        entry: &Path,
+        read: &dyn Fn(&Path) -> std::io::Result<String>,
+    ) -> Result<Self, ModuleError> {
+        let root = root.to_path_buf();
         let mut loader = Loader {
             root,
             read,
@@ -754,6 +789,32 @@ fn main() -> int:
             e.message,
             "`clamp` is used in this file but is private to module `combat`"
         );
+    }
+
+    #[test]
+    fn test_project_root_is_package_src_or_file_directory() {
+        let base = std::env::temp_dir().join(format!("pain_root_test_{}", std::process::id()));
+        let nested = base.join("pkg").join("src").join("ai");
+        std::fs::create_dir_all(&nested).unwrap();
+        std::fs::create_dir_all(base.join("loose")).unwrap();
+        std::fs::write(base.join("pkg").join("pain.toml"), "").unwrap();
+        assert_eq!(
+            project_root(&nested.join("target.pain")),
+            base.join("pkg").join("src")
+        );
+        assert_eq!(
+            project_root(&base.join("pkg").join("tool.pain")),
+            base.join("pkg")
+        );
+        let _ = std::fs::remove_dir_all(base.join("pkg"));
+        // No package above (as long as the temp directory is not inside one)
+        if project_root(&base.join("x.pain")) == base {
+            assert_eq!(
+                project_root(&base.join("loose").join("main.pain")),
+                base.join("loose")
+            );
+        }
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]

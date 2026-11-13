@@ -248,7 +248,6 @@ fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
 /// Load the entry file with everything it imports and link it into one program
 fn load_program(input: &Path) -> anyhow::Result<(ModuleGraph, Program)> {
     let graph = ModuleGraph::load(input).map_err(|e| anyhow::anyhow!("{}", e))?;
@@ -291,6 +290,7 @@ fn type_check_linked(
     Err(anyhow::anyhow!("Type check failed"))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build(
     input: &PathBuf,
     output: Option<&PathBuf>,
@@ -411,7 +411,7 @@ fn build(
     Ok(())
 }
 
-fn run(input: &PathBuf) -> anyhow::Result<()> {
+fn run(input: &Path) -> anyhow::Result<()> {
     let (graph, program) = load_program(input)?;
     let source = graph.entry().source.clone();
 
@@ -498,13 +498,12 @@ fn check(input: &PathBuf) -> anyhow::Result<()> {
 fn query(
     kind: &str,
     symbol: Option<&str>,
-    input: &PathBuf,
+    input: &Path,
     max_paths: usize,
     text: bool,
 ) -> anyhow::Result<()> {
-    let source = fs::read_to_string(input)?;
-    let program = parse(&source).map_err(|e| anyhow::anyhow!("Parse error: {}", e))?;
-    let index = ProgramIndex::build(&program, &source);
+    let graph = ModuleGraph::load(input).map_err(|e| anyhow::anyhow!("{}", e))?;
+    let index = ProgramIndex::from_graph(&graph);
     let need_symbol = || symbol.ok_or_else(|| anyhow::anyhow!("`query {}` needs a symbol", kind));
     let result = match kind {
         "symbols" => Ok(index.query_symbols()),
