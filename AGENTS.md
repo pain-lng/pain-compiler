@@ -26,6 +26,7 @@ source ─ lexer.rs ─ parser/mod.rs ─ ast.rs ─ type_checker.rs ─┬─ i
 | `src/pml*.rs` | PML configuration format: lexer, parser, values |
 | `src/formatter.rs`, `src/doc_generator.rs` | `pain format`, `pain doc` |
 | `src/modules.rs` | Multi-file programs: `import`, `pub`, loading the module graph and linking it into one `Program` |
+| `src/diagnostics.rs` | `pain check --json`: one report with stable codes (`P`/`M`/`T`/`W`), positions and `fix` objects |
 | `src/query.rs` | `pain query`: call graph, callers/callees, code slices as JSON, across all files of the program |
 | `src/main.rs` | CLI: `build`, `run`, `check`, `query`, `format`, `doc`, `repl`, PGO commands |
 
@@ -60,6 +61,27 @@ dispatch. Anything the graph cannot resolve (receiver of unknown type, call insi
 an f-string) is listed in `notes` and turns `exact` off. Keep that guarantee when
 adding language features: a new way to call code must either be resolved in
 `query.rs` or reported there.
+
+## Diagnostics for tools
+
+`pain check --input file.pain --json` prints one JSON report and exits with 1 when
+there are errors:
+
+```json
+{"ok": false, "errors": 1, "warnings": 0, "diagnostics": [
+  {"code": "M007", "severity": "error", "file": "main.pain", "line": null, "column": null,
+   "message": "`helper` is used in this file but not imported; add `import lib: helper`",
+   "fix": {"kind": "add_import", "module": "lib", "name": "helper", "text": "import lib: helper"}}]}
+```
+
+- Codes are stable and listed at the top of `src/diagnostics.rs`: `P001` syntax,
+  `M001`-`M010` modules, `T001`-`T005` types, `W001`-`W004` warnings. A code never
+  changes meaning; a new kind of problem gets a new code.
+- `fix` describes the obvious repair when there is one: `add_import`, `make_public`,
+  `choose_name` (candidates), `create_file`, `match_type`, `remove_function` (lines).
+- `line` is `null` when the compiler does not know the position (type errors:
+  expressions carry no span yet). Do not replace it with a guess.
+- A new error must get a code here; the text output of `pain check` is for people.
 
 ## Modules
 

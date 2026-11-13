@@ -46,10 +46,14 @@ impl Module {
 /// A problem with the module structure, tied to a file and line
 #[derive(Debug, Clone, PartialEq)]
 pub struct ModuleError {
+    /// Stable code of the problem (`M001`...), see diagnostics.rs
+    pub code: &'static str,
     pub file: PathBuf,
     /// 0 when the problem is not tied to a line
     pub line: usize,
     pub message: String,
+    /// Machine-readable repair, when there is an obvious one
+    pub fix: Option<serde_json::Value>,
 }
 
 impl fmt::Display for ModuleError {
@@ -117,15 +121,18 @@ impl Loader<'_> {
                     .collect();
                 chain.push(self.display_name(index));
                 return Err(ModuleError {
+                    code: "M006",
                     file: file.to_path_buf(),
                     line,
                     message: format!("import cycle: {}", chain.join(" -> ")),
+                    fix: None,
                 });
             }
             return Ok(index);
         }
         let source = (self.read)(&path).map_err(|e| match from {
             Some((file, line)) => ModuleError {
+                code: "M001",
                 file: file.to_path_buf(),
                 line,
                 message: format!(
@@ -134,17 +141,25 @@ impl Loader<'_> {
                     path.display(),
                     e
                 ),
+                fix: Some(serde_json::json!({
+                    "kind": "create_file",
+                    "file": path.display().to_string().replace('\\', "/"),
+                })),
             },
             None => ModuleError {
+                code: "M010",
                 file: path.clone(),
                 line: 0,
                 message: format!("cannot read file: {}", e),
+                fix: None,
             },
         })?;
         let program = parse(&source).map_err(|e| ModuleError {
+            code: "P001",
             file: path.clone(),
             line: 0,
             message: format!("Parse error: {}", e),
+            fix: None,
         })?;
         let index = self.modules.len();
         self.modules.push(Module {
@@ -244,10 +259,14 @@ impl ModuleGraph {
             let own: HashSet<&str> = module.item_names().map(|(name, _)| name).collect();
             let mut imported: HashMap<&str, String> = HashMap::new();
             for import in &module.program.imports {
-                let err = |message: String| ModuleError {
-                    file: module.path.clone(),
-                    line: import.span.line(),
-                    message,
+                let err = |code: &'static str, message: String, fix: Option<serde_json::Value>| {
+                    ModuleError {
+                        code,
+                        file: module.path.clone(),
+                        line: import.span.line(),
+                        message,
+                        fix,
+                    }
                 };
                 let target_name = import.module.join(".");
                 let target = self
@@ -261,36 +280,56 @@ impl ModuleGraph {
                                 .filter(|(_, public)| *public)
                                 .map(|(item, _)| item)
                                 .collect();
-                            return Err(err(format!(
-                                "module `{}` has no `{}`; it exports: {}",
-                                target_name,
-                                name,
-                                if public.is_empty() {
-                                    "nothing".to_string()
-                                } else {
-                                    public.join(", ")
-                                }
-                            )));
+                            return Err(err(
+                                "M002",
+                                format!(
+                                    "module `{}` has no `{}`; it exports: {}",
+                                    target_name,
+                                    name,
+                                    if public.is_empty() {
+                                        "nothing".to_string()
+                                    } else {
+                                        public.join(", ")
+                                    }
+                                ),
+                                Some(serde_json::json!({
+                                    "kind": "choose_name",
+                                    "candidates": public,
+                                })),
+                            ));
                         }
                         Some((_, false)) => {
-                            return Err(err(format!(
-                                "`{}` in module `{}` is not `pub` and cannot be imported",
-                                name, target_name
-                            )));
+                            return Err(err(
+                                "M003",
+                                format!(
+                                    "`{}` in module `{}` is not `pub` and cannot be imported",
+                                    name, target_name
+                                ),
+                                Some(serde_json::json!({
+                                    "kind": "make_public",
+                                    "file": target.path.display().to_string().replace('\\', "/"),
+                                    "name": name,
+                                })),
+                            ));
                         }
                         Some((_, true)) => {}
                     }
                     if own.contains(name.as_str()) {
-                        return Err(err(format!(
-                            "imported name `{}` is also defined in this file",
-                            name
-                        )));
+                        return Err(err(
+                            "M004",
+                            format!("imported name `{}` is also defined in this file", name),
+                            None,
+                        ));
                     }
                     if let Some(previous) = imported.insert(name, target_name.clone()) {
-                        return Err(err(format!(
-                            "`{}` is imported twice (from `{}` and `{}`)",
-                            name, previous, target_name
-                        )));
+                        return Err(err(
+                            "M005",
+                            format!(
+                                "`{}` is imported twice (from `{}` and `{}`)",
+                                name, previous, target_name
+                            ),
+                            None,
+                        ));
                     }
                 }
             }
@@ -358,27 +397,50 @@ impl ModuleGraph {
                 let public = owner
                     .item_names()
                     .any(|(item, public)| item == name && public);
-                let message = if owner_index == 0 || entry_names.contains(name.as_str()) && !public
-                {
-                    format!(
-                        "`{}` is used in {} but is neither defined nor imported there",
-                        name, here
-                    )
-                } else if public {
-                    format!(
-                        "`{}` is used in {} but not imported; add `import {}: {}`",
-                        name, here, owner.name, name
-                    )
-                } else {
-                    format!(
-                        "`{}` is used in {} but is private to module `{}`",
-                        name, here, owner.name
-                    )
-                };
+                let (code, message, fix) =
+                    if owner_index == 0 || entry_names.contains(name.as_str()) && !public {
+                        (
+                            "M009",
+                            format!(
+                                "`{}` is used in {} but is neither defined nor imported there",
+                                name, here
+                            ),
+                            None,
+                        )
+                    } else if public {
+                        (
+                            "M007",
+                            format!(
+                                "`{}` is used in {} but not imported; add `import {}: {}`",
+                                name, here, owner.name, name
+                            ),
+                            Some(serde_json::json!({
+                                "kind": "add_import",
+                                "module": owner.name,
+                                "name": name,
+                                "text": format!("import {}: {}", owner.name, name),
+                            })),
+                        )
+                    } else {
+                        (
+                            "M008",
+                            format!(
+                                "`{}` is used in {} but is private to module `{}`",
+                                name, here, owner.name
+                            ),
+                            Some(serde_json::json!({
+                                "kind": "make_public",
+                                "file": owner.path.display().to_string().replace('\\', "/"),
+                                "name": name,
+                            })),
+                        )
+                    };
                 return Err(ModuleError {
+                    code,
                     file: module.path.clone(),
                     line: 0,
                     message,
+                    fix,
                 });
             }
         }

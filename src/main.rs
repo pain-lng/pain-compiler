@@ -81,6 +81,9 @@ enum Commands {
         /// Input source file
         #[arg(short, long)]
         input: PathBuf,
+        /// Print one JSON report (stable codes, positions, repairs) instead of text
+        #[arg(long)]
+        json: bool,
     },
     /// Format a Pain source file
     Format {
@@ -180,8 +183,16 @@ fn main() -> anyhow::Result<()> {
         Commands::Run { input } => {
             run(&input)?;
         }
-        Commands::Check { input } => {
-            check(&input)?;
+        Commands::Check { input, json } => {
+            if json {
+                let report = pain_compiler::diagnostics::check(&input);
+                println!("{}", serde_json::to_string_pretty(&report.to_json())?);
+                if !report.ok() {
+                    std::process::exit(1);
+                }
+            } else {
+                check(&input)?;
+            }
         }
         Commands::Query {
             kind,

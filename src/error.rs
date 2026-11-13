@@ -59,7 +59,11 @@ fn levenshtein_distance(s1: &str, s2: &str) -> usize {
 }
 
 // Find similar names using fuzzy matching
-fn find_similar_names(name: &str, candidates: &[String], max_distance: usize) -> Vec<String> {
+pub(crate) fn find_similar_names(
+    name: &str,
+    candidates: &[String],
+    max_distance: usize,
+) -> Vec<String> {
     let mut matches: Vec<(String, usize)> = candidates
         .iter()
         .filter_map(|candidate| {

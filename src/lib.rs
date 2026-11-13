@@ -2,6 +2,7 @@
 
 pub mod ast;
 pub mod codegen;
+pub mod diagnostics;
 pub mod doc_generator;
 pub mod error;
 pub mod formatter;
