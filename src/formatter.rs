@@ -24,8 +24,16 @@ impl Formatter {
     }
 
     fn format_program(&mut self, program: &Program) {
+        for import in &program.imports {
+            self.write(&format!(
+                "import {}: {}",
+                import.module.join("."),
+                import.names.join(", ")
+            ));
+            self.newline();
+        }
         for (i, item) in program.items.iter().enumerate() {
-            if i > 0 {
+            if i > 0 || !program.imports.is_empty() {
                 self.newline();
             }
             self.format_item(item);
@@ -57,6 +65,9 @@ impl Formatter {
 
         // Class signature
         self.write_indent();
+        if class.public {
+            self.write("pub ");
+        }
         self.write("class ");
         self.write(&class.name);
         self.write(":");
@@ -108,6 +119,9 @@ impl Formatter {
 
         // Function signature
         self.write_indent();
+        if func.public {
+            self.write("pub ");
+        }
         self.write("fn ");
         self.write(&func.name);
         self.write("(");
@@ -635,7 +649,9 @@ mod tests {
     #[test]
     fn test_format_doc_comment() {
         let program = Program {
+            imports: vec![],
             items: vec![Item::Function(Function {
+                public: false,
                 doc: Some("This is a test function.".to_string()),
                 attrs: vec![],
                 name: "test".to_string(),
@@ -654,7 +670,9 @@ mod tests {
     #[test]
     fn test_format_attributes() {
         let program = Program {
+            imports: vec![],
             items: vec![Item::Function(Function {
+                public: false,
                 doc: None,
                 attrs: vec![Attribute {
                     name: "inline".to_string(),

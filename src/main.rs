@@ -6,8 +6,8 @@ use pain_compiler::interpreter::Environment;
 use pain_compiler::{
     llvm_tools::{self, PgoMode},
     parse, type_check_program_with_context, CodeGenerator, DocGenerator, ErrorFormatter, Formatter,
-    Interpreter, IrBuilder, Item, MlirCodeGenerator, Optimizer, ProgramIndex, TypeContext,
-    WarningCollector,
+    Interpreter, IrBuilder, Item, MlirCodeGenerator, ModuleGraph, Optimizer, Program, ProgramIndex,
+    TypeContext, WarningCollector,
 };
 use rustyline::error::ReadlineError;
 use rustyline::DefaultEditor;
@@ -249,6 +249,48 @@ fn main() -> anyhow::Result<()> {
 }
 
 #[allow(clippy::too_many_arguments)]
+/// Load the entry file with everything it imports and link it into one program
+fn load_program(input: &Path) -> anyhow::Result<(ModuleGraph, Program)> {
+    let graph = ModuleGraph::load(input).map_err(|e| anyhow::anyhow!("{}", e))?;
+    let program = graph.link().map_err(|e| anyhow::anyhow!("{}", e))?;
+    Ok((graph, program))
+}
+
+/// Type check the linked program; on failure print the error against the file it is in
+fn type_check_linked(
+    graph: &ModuleGraph,
+    program: &Program,
+    ctx: &mut TypeContext,
+) -> anyhow::Result<()> {
+    for item in &program.items {
+        match item {
+            Item::Function(func) => ctx.add_function(func.name.clone(), func.clone()),
+            Item::Class(class) => ctx.add_class(class.name.clone(), class.clone()),
+        }
+    }
+    let Err(error) = type_check_program_with_context(program, ctx) else {
+        return Ok(());
+    };
+    // Expressions carry no file: find the module whose own code fails to check
+    for (index, module) in graph.modules().iter().enumerate() {
+        let Ok(isolated) = graph.link_isolated(index) else {
+            continue;
+        };
+        let mut module_ctx = TypeContext::new();
+        if let Err(module_error) = type_check_program_with_context(&isolated, &mut module_ctx) {
+            if graph.modules().len() > 1 {
+                eprintln!("in {}:", module.path.display());
+            }
+            let formatter = ErrorFormatter::new(&module.source).with_context(ctx);
+            eprintln!("{}", formatter.format_error(&module_error));
+            return Err(anyhow::anyhow!("Type check failed"));
+        }
+    }
+    let formatter = ErrorFormatter::new(&graph.entry().source).with_context(ctx);
+    eprintln!("{}", formatter.format_error(&error));
+    Err(anyhow::anyhow!("Type check failed"))
+}
+
 fn build(
     input: &PathBuf,
     output: Option<&PathBuf>,
@@ -261,28 +303,11 @@ fn build(
 ) -> anyhow::Result<()> {
     println!("Building: {:?}", input);
 
-    let source = fs::read_to_string(input)?;
-    let program = parse(&source).map_err(|e| anyhow::anyhow!("Parse error: {}", e))?;
+    let (graph, program) = load_program(input)?;
 
     // Type check
     let mut ctx = TypeContext::new();
-    // Build context first (first pass)
-    for item in &program.items {
-        match item {
-            Item::Function(func) => {
-                ctx.add_function(func.name.clone(), func.clone());
-            }
-            Item::Class(class) => {
-                ctx.add_class(class.name.clone(), class.clone());
-            }
-        }
-    }
-
-    if let Err(e) = type_check_program_with_context(&program, &mut ctx) {
-        let formatter = ErrorFormatter::new(&source).with_context(&ctx);
-        eprintln!("{}", formatter.format_error(&e));
-        return Err(anyhow::anyhow!("Type check failed"));
-    }
+    type_check_linked(&graph, &program, &mut ctx)?;
 
     println!("✓ Parsed and type-checked successfully");
 
@@ -387,28 +412,12 @@ fn build(
 }
 
 fn run(input: &PathBuf) -> anyhow::Result<()> {
-    let source = fs::read_to_string(input)?;
-    let program = parse(&source).map_err(|e| anyhow::anyhow!("Parse error: {}", e))?;
+    let (graph, program) = load_program(input)?;
+    let source = graph.entry().source.clone();
 
     // Type check
     let mut ctx = TypeContext::new();
-    // Build context first (first pass)
-    for item in &program.items {
-        match item {
-            Item::Function(func) => {
-                ctx.add_function(func.name.clone(), func.clone());
-            }
-            Item::Class(class) => {
-                ctx.add_class(class.name.clone(), class.clone());
-            }
-        }
-    }
-
-    if let Err(e) = type_check_program_with_context(&program, &mut ctx) {
-        let formatter = ErrorFormatter::new(&source).with_context(&ctx);
-        eprintln!("{}", formatter.format_error(&e));
-        return Err(anyhow::anyhow!("Type check failed"));
-    }
+    type_check_linked(&graph, &program, &mut ctx)?;
 
     // Collect and display warnings
     let warnings = WarningCollector::collect_warnings(&program, &ctx);
@@ -475,28 +484,11 @@ fn run(input: &PathBuf) -> anyhow::Result<()> {
 fn check(input: &PathBuf) -> anyhow::Result<()> {
     println!("Checking: {:?}", input);
 
-    let source = fs::read_to_string(input)?;
-    let program = parse(&source).map_err(|e| anyhow::anyhow!("Parse error: {}", e))?;
+    let (graph, program) = load_program(input)?;
 
     // Type check
     let mut ctx = TypeContext::new();
-    // Build context first (first pass)
-    for item in &program.items {
-        match item {
-            Item::Function(func) => {
-                ctx.add_function(func.name.clone(), func.clone());
-            }
-            Item::Class(class) => {
-                ctx.add_class(class.name.clone(), class.clone());
-            }
-        }
-    }
-
-    if let Err(e) = type_check_program_with_context(&program, &mut ctx) {
-        let formatter = ErrorFormatter::new(&source).with_context(&ctx);
-        eprintln!("{}", formatter.format_error(&e));
-        return Err(anyhow::anyhow!("Type check failed"));
-    }
+    type_check_linked(&graph, &program, &mut ctx)?;
 
     println!("✓ All checks passed!");
 

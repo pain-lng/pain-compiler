@@ -160,7 +160,12 @@ impl<'a> Parser<'a> {
     fn sync_to_next_item(&mut self) {
         while let Some(token) = self.peek_token() {
             match token {
-                Token::Fn | Token::Class | Token::At | Token::DocComment(_) => {
+                Token::Fn
+                | Token::Class
+                | Token::At
+                | Token::DocComment(_)
+                | Token::Pub
+                | Token::Import => {
                     break; // Found start of next item
                 }
                 _ => {
@@ -180,10 +185,27 @@ impl<'a> Parser<'a> {
             Span::single(Position::start())
         };
 
+        let mut imports = Vec::new();
         let mut items = Vec::new();
         let mut errors = Vec::new();
 
         while self.peek().is_some() {
+            if matches!(self.peek_token(), Some(Token::Import)) {
+                let span = self.current_span();
+                match self.parse_import(!items.is_empty()) {
+                    Ok(import) => imports.push(import),
+                    Err(message) => {
+                        errors.push(ParseError {
+                            message,
+                            span,
+                            expected: None,
+                            found: None,
+                        });
+                        self.sync_to_next_item();
+                    }
+                }
+                continue;
+            }
             match self.parse_item_with_recovery() {
                 Ok(item) => items.push(item),
                 Err(err) => {
@@ -201,7 +223,11 @@ impl<'a> Parser<'a> {
         };
 
         let span = Span::new(start_span.start, end_span.end);
-        let program = Program { items, span };
+        let program = Program {
+            imports,
+            items,
+            span,
+        };
 
         if errors.is_empty() {
             (Ok(program), vec![])
@@ -211,11 +237,11 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_item_with_recovery(&mut self) -> Result<Item, ParseError> {
-        if matches!(self.peek_token(), Some(Token::Class)) {
+        if self.at_class_start() {
             self.parse_class_with_recovery().map(Item::Class)
         } else if matches!(
             self.peek_token(),
-            Some(Token::Fn) | Some(Token::At) | Some(Token::DocComment(_))
+            Some(Token::Fn) | Some(Token::At) | Some(Token::DocComment(_)) | Some(Token::Pub)
         ) {
             self.parse_function_with_recovery().map(Item::Function)
         } else {
@@ -268,9 +294,14 @@ impl<'a> Parser<'a> {
             Span::single(Position::start())
         };
 
+        let mut imports = Vec::new();
         let mut items = Vec::new();
         while self.peek().is_some() {
-            items.push(self.parse_item()?);
+            if matches!(self.peek_token(), Some(Token::Import)) {
+                imports.push(self.parse_import(!items.is_empty())?);
+            } else {
+                items.push(self.parse_item()?);
+            }
         }
 
         let end_span = if let Some(last) = self.tokens.last() {
@@ -280,15 +311,94 @@ impl<'a> Parser<'a> {
         };
 
         let span = Span::new(start_span.start, end_span.end);
-        Ok(Program { items, span })
+        Ok(Program {
+            imports,
+            items,
+            span,
+        })
+    }
+
+    /// `class` or `pub class` comes next
+    fn at_class_start(&self) -> bool {
+        match self.peek_token() {
+            Some(Token::Class) => true,
+            Some(Token::Pub) => matches!(
+                self.tokens.get(self.pos + 1).map(|t| &t.token),
+                Some(Token::Class)
+            ),
+            _ => false,
+        }
+    }
+
+    /// Consume `pub` if it is the next token
+    fn parse_visibility(&mut self) -> bool {
+        if matches!(self.peek_token(), Some(Token::Pub)) {
+            self.next();
+            true
+        } else {
+            false
+        }
+    }
+
+    fn expect_ident(&mut self, what: &str) -> Result<String, String> {
+        let span = self.current_span();
+        match self.next().map(|t| &t.token) {
+            Some(Token::Ident(name)) => Ok(name.clone()),
+            _ => Err(format!(
+                "Expected {} at {}:{}",
+                what,
+                span.line(),
+                span.column()
+            )),
+        }
+    }
+
+    /// `import a.b: x, y`. The only form: every imported name is listed.
+    fn parse_import(&mut self, after_definitions: bool) -> Result<Import, String> {
+        let start = self.expect(Token::Import)?;
+        if after_definitions {
+            return Err(format!(
+                "Imports must come before functions and classes at {}:{}",
+                start.line(),
+                start.column()
+            ));
+        }
+        let mut module = vec![self.expect_ident("module name")?];
+        while matches!(self.peek_token(), Some(Token::Dot)) {
+            self.next();
+            module.push(self.expect_ident("module name")?);
+        }
+        if !matches!(self.peek_token(), Some(Token::Colon)) {
+            let span = self.current_span();
+            return Err(format!(
+                "Expected `:` and the imported names after module `{}` at {}:{} (write `import {}: name`)",
+                module.join("."),
+                span.line(),
+                span.column(),
+                module.join(".")
+            ));
+        }
+        self.next();
+        let mut names = vec![self.expect_ident("imported name")?];
+        let mut end = start;
+        while matches!(self.peek_token(), Some(Token::Comma)) {
+            self.next();
+            end = self.current_span();
+            names.push(self.expect_ident("imported name")?);
+        }
+        Ok(Import {
+            module,
+            names,
+            span: Span::new(start.start, end.end),
+        })
     }
 
     fn parse_item(&mut self) -> Result<Item, String> {
-        if matches!(self.peek_token(), Some(Token::Class)) {
+        if self.at_class_start() {
             Ok(Item::Class(self.parse_class()?))
         } else if matches!(
             self.peek_token(),
-            Some(Token::Fn) | Some(Token::At) | Some(Token::DocComment(_))
+            Some(Token::Fn) | Some(Token::At) | Some(Token::DocComment(_)) | Some(Token::Pub)
         ) {
             Ok(Item::Function(self.parse_function()?))
         } else {
@@ -324,6 +434,7 @@ impl<'a> Parser<'a> {
             attrs.push(self.parse_attribute()?);
         }
 
+        let public = self.parse_visibility();
         self.expect(Token::Fn)?;
 
         let name_span = self.current_span();
@@ -377,7 +488,12 @@ impl<'a> Parser<'a> {
             // No indentation - parse single statement or empty body
             if !matches!(
                 self.peek_token(),
-                Some(Token::Fn) | Some(Token::At) | Some(Token::DocComment(_)) | None
+                Some(Token::Fn)
+                    | Some(Token::At)
+                    | Some(Token::DocComment(_))
+                    | Some(Token::Pub)
+                    | Some(Token::Class)
+                    | None
             ) {
                 body.push(self.parse_statement()?);
             }
@@ -389,6 +505,7 @@ impl<'a> Parser<'a> {
         Ok(Function {
             doc,
             attrs,
+            public,
             name,
             params,
             return_type,
@@ -420,6 +537,7 @@ impl<'a> Parser<'a> {
             attrs.push(self.parse_attribute()?);
         }
 
+        let public = self.parse_visibility();
         self.expect(Token::Class)?;
 
         let name_span = self.current_span();
@@ -470,6 +588,13 @@ impl<'a> Parser<'a> {
                 Some(Token::Fn) | Some(Token::At) | Some(Token::DocComment(_))
             ) {
                 methods.push(self.parse_function()?);
+            } else if matches!(self.peek_token(), Some(Token::Pub)) {
+                let span = self.current_span();
+                return Err(format!(
+                    "`pub` is not allowed on fields and methods at {}:{}: a class is exported as a whole",
+                    span.line(),
+                    span.column()
+                ));
             } else {
                 let span = self.current_span();
                 return Err(format!(
@@ -497,6 +622,7 @@ impl<'a> Parser<'a> {
         Ok(Class {
             doc,
             attrs,
+            public,
             name,
             fields,
             methods,

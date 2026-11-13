@@ -52,6 +52,8 @@ pub enum Token {
     New,
     #[token("import")]
     Import,
+    #[token("pub")]
+    Pub,
     #[token("async")]
     Async,
     #[token("await")]

@@ -786,6 +786,7 @@ fn test():
     fn test_type_context_function_lookup() {
         let mut ctx = TypeContext::new();
         let func = Function {
+            public: false,
             doc: None,
             attrs: vec![],
             name: "test".to_string(),

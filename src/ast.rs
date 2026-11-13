@@ -4,7 +4,18 @@ use crate::span::Span;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Program {
+    /// `import module: name, name` lines, in source order
+    pub imports: Vec<Import>,
     pub items: Vec<Item>,
+    pub span: Span,
+}
+
+/// `import a.b: x, y` - names taken from the module in file `a/b.pain`
+#[derive(Debug, Clone, PartialEq)]
+pub struct Import {
+    /// Module path segments: `a.b` is `["a", "b"]`
+    pub module: Vec<String>,
+    pub names: Vec<String>,
     pub span: Span,
 }
 
@@ -19,6 +30,8 @@ pub enum Item {
 pub struct Function {
     pub doc: Option<String>, // Doc comment (Python-style)
     pub attrs: Vec<Attribute>,
+    /// Declared with `pub`: other modules may import it
+    pub public: bool,
     pub name: String,
     pub params: Vec<Parameter>,
     pub return_type: Option<Type>,
@@ -30,6 +43,8 @@ pub struct Function {
 pub struct Class {
     pub doc: Option<String>, // Doc comment
     pub attrs: Vec<Attribute>,
+    /// Declared with `pub`: other modules may import it
+    pub public: bool,
     pub name: String,
     pub fields: Vec<ClassField>,
     pub methods: Vec<Function>,

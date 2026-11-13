@@ -260,7 +260,9 @@ mod tests {
     #[test]
     fn test_generate_doc() {
         let program = Program {
+            imports: vec![],
             items: vec![Item::Function(Function {
+                public: false,
                 doc: Some("Adds two numbers together.".to_string()),
                 attrs: vec![],
                 name: "add".to_string(),
@@ -290,7 +292,9 @@ mod tests {
     #[test]
     fn test_generate_doc_with_attributes() {
         let program = Program {
+            imports: vec![],
             items: vec![Item::Function(Function {
+                public: false,
                 doc: Some("Inline function.".to_string()),
                 attrs: vec![Attribute {
                     name: "inline".to_string(),
@@ -313,7 +317,9 @@ mod tests {
     #[test]
     fn test_generate_doc_without_return_type() {
         let program = Program {
+            imports: vec![],
             items: vec![Item::Function(Function {
+                public: false,
                 doc: None,
                 attrs: vec![],
                 name: "void_func".to_string(),
