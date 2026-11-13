@@ -278,7 +278,10 @@ fn type_check_linked(
         let mut module_ctx = TypeContext::new();
         if let Err(module_error) = type_check_program_with_context(&isolated, &mut module_ctx) {
             if graph.modules().len() > 1 {
-                eprintln!("in {}:", module.path.display());
+                eprintln!(
+                    "in {}:",
+                    module.path.display().to_string().replace('\\', "/")
+                );
             }
             let formatter = ErrorFormatter::new(&module.source).with_context(ctx);
             eprintln!("{}", formatter.format_error(&module_error));
@@ -288,6 +291,23 @@ fn type_check_linked(
     let formatter = ErrorFormatter::new(&graph.entry().source).with_context(ctx);
     eprintln!("{}", formatter.format_error(&error));
     Err(anyhow::anyhow!("Type check failed"))
+}
+
+/// Print the warnings of every module against its own file
+fn print_warnings(graph: &ModuleGraph) {
+    let mut last_module = None;
+    for (index, warning) in WarningCollector::collect_graph_warnings(graph) {
+        let module = &graph.modules()[index];
+        if graph.modules().len() > 1 && last_module != Some(index) {
+            eprintln!(
+                "in {}:",
+                module.path.display().to_string().replace('\\', "/")
+            );
+            last_module = Some(index);
+        }
+        let formatter = ErrorFormatter::new(&module.source);
+        eprintln!("{}", formatter.format_warning(&warning));
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -413,20 +433,12 @@ fn build(
 
 fn run(input: &Path) -> anyhow::Result<()> {
     let (graph, program) = load_program(input)?;
-    let source = graph.entry().source.clone();
 
     // Type check
     let mut ctx = TypeContext::new();
     type_check_linked(&graph, &program, &mut ctx)?;
 
-    // Collect and display warnings
-    let warnings = WarningCollector::collect_warnings(&program, &ctx);
-    if !warnings.is_empty() {
-        let formatter = ErrorFormatter::new(&source);
-        for warning in &warnings {
-            eprintln!("{}", formatter.format_warning(warning));
-        }
-    }
+    print_warnings(&graph);
 
     // Execute
     let mut interpreter =
@@ -489,6 +501,8 @@ fn check(input: &PathBuf) -> anyhow::Result<()> {
     // Type check
     let mut ctx = TypeContext::new();
     type_check_linked(&graph, &program, &mut ctx)?;
+
+    print_warnings(&graph);
 
     println!("✓ All checks passed!");
 

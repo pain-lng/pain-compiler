@@ -864,6 +864,48 @@ impl ProgramIndex {
             .collect()
     }
 
+    /// Functions and methods that can never run. With a `main`, everything not
+    /// reachable from it; exported (`pub`) items of imported modules also count as
+    /// entry points, because another program may import them. Without a `main`
+    /// (a library file), everything that is not `pub` and that nothing else calls.
+    pub fn unused_symbols(&self) -> BTreeSet<String> {
+        let exported = |s: &Symbol| s.public && !s.module.is_empty();
+        if !self.symbols.contains_key("main") {
+            return self
+                .symbols
+                .values()
+                .filter(|s| !s.public)
+                .filter(|s| {
+                    !self
+                        .calls
+                        .iter()
+                        .any(|c| c.callee == s.name && c.caller != s.name)
+                })
+                .map(|s| s.name.clone())
+                .collect();
+        }
+        let mut reached: HashSet<&str> = HashSet::new();
+        let mut queue: Vec<&str> = self
+            .symbols
+            .values()
+            .filter(|s| s.name == "main" || exported(s))
+            .map(|s| s.name.as_str())
+            .collect();
+        reached.extend(queue.iter().copied());
+        while let Some(current) = queue.pop() {
+            for call in self.calls.iter().filter(|c| c.caller == current) {
+                if reached.insert(call.callee.as_str()) {
+                    queue.push(call.callee.as_str());
+                }
+            }
+        }
+        self.symbols
+            .keys()
+            .filter(|name| !reached.contains(name.as_str()))
+            .cloned()
+            .collect()
+    }
+
     /// All symbols of the program with signatures and line ranges
     pub fn query_symbols(&self) -> Value {
         let mut out = self.envelope("symbols", None);
@@ -1459,6 +1501,71 @@ fn clamp(seed: int) -> int:
             );
             // Bodies from other files stay out of the slice
             assert!(!text.contains("return clamp("));
+        });
+    }
+
+    #[test]
+    fn test_unused_symbols_follow_reachability_from_main() {
+        let source = "class Counter:
+    let count: int
+
+    fn bump(step: int) -> int:
+        return count + step
+
+    fn reset() -> int:
+        return 0
+
+fn helper() -> int:
+    return orphan_callee()
+
+fn orphan_callee() -> int:
+    return 1
+
+fn used() -> int:
+    return 2
+
+fn main() -> int:
+    var c = new Counter(0)
+    return c.bump(used())
+";
+        with_index(source, |index| {
+            // A called method is used; a function called only from dead code is not
+            assert_eq!(
+                index.unused_symbols().into_iter().collect::<Vec<_>>(),
+                vec!["Counter.reset", "helper", "orphan_callee"]
+            );
+        });
+        // Without main: only what nothing calls
+        with_index(
+            "fn a() -> int:\n    return b()\n\nfn b() -> int:\n    return 1\n",
+            |index| {
+                assert_eq!(
+                    index.unused_symbols().into_iter().collect::<Vec<_>>(),
+                    vec!["a"]
+                );
+            },
+        );
+    }
+
+    #[test]
+    fn test_exported_items_of_modules_are_not_unused() {
+        with_graph(MODULES, |index| {
+            // `combat.Unit.rest` is called; both private `clamp`s are called
+            assert!(index.unused_symbols().is_empty());
+        });
+        let files: &[(&str, &str)] = &[
+            ("main.pain", "import lib: used\n\nfn main() -> int:\n    return used()\n"),
+            (
+                "lib.pain",
+                "pub fn used() -> int:\n    return 1\n\npub fn api() -> int:\n    return helper()\n\nfn helper() -> int:\n    return 2\n\nfn stale() -> int:\n    return 3\n",
+            ),
+        ];
+        with_graph(files, |index| {
+            // `api` is exported, so it and its helper stay; only `stale` is dead
+            assert_eq!(
+                index.unused_symbols().into_iter().collect::<Vec<_>>(),
+                vec!["lib.stale"]
+            );
         });
     }
 

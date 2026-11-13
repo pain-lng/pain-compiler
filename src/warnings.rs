@@ -1,6 +1,8 @@
 // Warning system for unused variables, dead code, etc.
 
 use crate::ast::*;
+use crate::modules::ModuleGraph;
+use crate::query::ProgramIndex;
 use crate::span::{Position, Span};
 use crate::type_checker::TypeContext;
 use std::collections::{HashMap, HashSet};
@@ -30,36 +32,60 @@ impl WarningCollector {
         }
     }
 
-    pub fn collect_warnings(program: &Program, ctx: &TypeContext) -> Vec<Warning> {
+    /// Warnings of a single-file program
+    pub fn collect_warnings(program: &Program, _ctx: &TypeContext) -> Vec<Warning> {
         let mut collector = Self::new();
-        collector.check_program(program, ctx);
+        // The call graph does not need the source text, only call positions do
+        let unused = ProgramIndex::build(program, "").unused_symbols();
+        collector.check_program(program, &|name| name.to_string(), &unused);
         collector.warnings
     }
 
-    fn check_program(&mut self, program: &Program, _ctx: &TypeContext) {
-        // Track which functions are called
-        let mut called_functions = HashSet::new();
-        let mut defined_functions = HashMap::new();
+    /// Warnings of a multi-file program, each with the index of the module
+    /// (`graph.modules()`) it belongs to, so it can be shown against the right file
+    pub fn collect_graph_warnings(graph: &ModuleGraph) -> Vec<(usize, Warning)> {
+        let unused = ProgramIndex::from_graph(graph).unused_symbols();
+        let mut out = Vec::new();
+        for (index, module) in graph.modules().iter().enumerate() {
+            let mut collector = Self::new();
+            collector.check_program(&module.program, &|name| module.qualified(name), &unused);
+            out.extend(collector.warnings.into_iter().map(|w| (index, w)));
+        }
+        out
+    }
 
+    /// `unused` holds program-wide names; `qualify` turns a top-level name of this
+    /// file into its program-wide name
+    fn check_program(
+        &mut self,
+        program: &Program,
+        qualify: &dyn Fn(&str) -> String,
+        unused: &std::collections::BTreeSet<String>,
+    ) {
+        let mut called_functions = HashSet::new();
         for item in &program.items {
             match item {
                 Item::Function(func) => {
-                    defined_functions.insert(func.name.clone(), func.span);
                     self.check_function(func, &mut called_functions);
+                    if unused.contains(&qualify(&func.name)) {
+                        self.warnings.push(Warning::UnusedFunction {
+                            name: func.name.clone(),
+                            span: func.span,
+                        });
+                    }
                 }
                 Item::Class(class) => {
                     for method in &class.methods {
-                        defined_functions.insert(method.name.clone(), method.span);
                         self.check_function(method, &mut called_functions);
+                        let name = format!("{}.{}", class.name, method.name);
+                        if unused.contains(&qualify(&name)) {
+                            self.warnings.push(Warning::UnusedFunction {
+                                name,
+                                span: method.span,
+                            });
+                        }
                     }
                 }
-            }
-        }
-
-        // Check for unused functions (except main)
-        for (name, span) in defined_functions {
-            if !called_functions.contains(&name) && name != "main" {
-                self.warnings.push(Warning::UnusedFunction { name, span });
             }
         }
     }
