@@ -15,6 +15,34 @@ pub fn check_clang_available() -> bool {
     Command::new("clang").arg("--version").output().is_ok()
 }
 
+/// Optimization level passed to LLVM when building native code.
+/// The code generator emits straightforward IR (stack slots, no SSA cleanup) and
+/// relies on LLVM's pipeline to optimize it.
+const NATIVE_OPT_LEVEL: &str = "-O2";
+
+/// Find clang: it runs the full LLVM optimization pipeline, llc only the backend
+fn find_clang() -> Option<String> {
+    if check_clang_available() {
+        return Some("clang".to_string());
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let llvm_clang = r"C:\Program Files\LLVM\bin\clang.exe";
+        if Path::new(llvm_clang).exists() {
+            return Some(llvm_clang.to_string());
+        }
+    }
+    None
+}
+
+/// Compiler for LLVM IR: clang when available (full optimization), llc otherwise
+fn find_optimizing_compiler() -> io::Result<String> {
+    match find_clang() {
+        Some(clang) => Ok(clang),
+        None => find_llvm_compiler(),
+    }
+}
+
 /// Find available LLVM compiler (llc or clang)
 fn find_llvm_compiler() -> io::Result<String> {
     // Try llc first
@@ -51,12 +79,13 @@ pub fn compile_llvm_ir_to_object(
     object_path: &Path,
     target_triple: Option<&str>,
 ) -> io::Result<()> {
-    let compiler = find_llvm_compiler()?;
+    let compiler = find_optimizing_compiler()?;
 
     let mut cmd = Command::new(&compiler);
+    cmd.arg(NATIVE_OPT_LEVEL);
 
     if compiler.ends_with("llc") || compiler == "llc" {
-        // Use llc
+        // Use llc (backend optimizations only: no clang to run the full pipeline)
         cmd.arg("-filetype=obj");
         cmd.arg("-o").arg(object_path);
 
@@ -67,6 +96,7 @@ pub fn compile_llvm_ir_to_object(
         cmd.arg(llvm_ir_path);
     } else {
         // Use clang to compile LLVM IR to object file
+        cmd.arg("-Wno-override-module");
         cmd.arg("-c");
         cmd.arg("-o").arg(object_path);
 
@@ -244,6 +274,7 @@ fn compile_stdlib_runtime(object_path: &Path, target_triple: Option<&str>) -> io
     }
     let mut cmd = Command::new("clang");
 
+    cmd.arg(NATIVE_OPT_LEVEL);
     cmd.arg("-c");
     cmd.arg("-o").arg(object_path);
 
@@ -303,8 +334,8 @@ pub fn compile_to_executable_with_pgo(
     pgo_mode: PgoMode,
     profile_path: Option<&Path>,
 ) -> io::Result<()> {
-    // Try to use clang directly (faster, one step)
-    let compiler = find_llvm_compiler()?;
+    // Prefer clang: one step, and it optimizes the IR (llc alone does not)
+    let compiler = find_optimizing_compiler()?;
 
     if compiler.contains("clang") || compiler == "clang" {
         // Use clang to compile LLVM IR directly to executable
@@ -315,6 +346,8 @@ pub fn compile_to_executable_with_pgo(
         };
         println!("Compiling LLVM IR to executable using clang{}...", pgo_msg);
         let mut cmd = Command::new(&compiler);
+        cmd.arg(NATIVE_OPT_LEVEL);
+        cmd.arg("-Wno-override-module");
         cmd.arg("-o").arg(executable_path);
 
         if let Some(triple) = target_triple {
